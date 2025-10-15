@@ -1,0 +1,35 @@
+# Environment and tooling
+.venv/
+venv/
+.env
+.env.*
+.python-version
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Generated experiment assets
+checkpoints/
+logs/
+plots/
+grid-search-record.json
+*-result.json
+*-training-metadata*.json
+
+# Large local resources
+models/
+datasets/minecraft/data/
+
+# Binary artifacts
+*.pt
+*.bin
+*.ckpt
+
+# OS cruft
+.DS_Store
+Thumbs.db

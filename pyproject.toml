@@ -1,0 +1,20 @@
+[project]
+name = "llm"
+version = "0.1.0"
+description = "LLM fine-tuning for ASCII art frame prediction and action recognition"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jupyter>=1.1.1",
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
+    "wandb>=0.16.0",
+    "matplotlib>=3.8.0",
+    "numpy>=1.24.0",
+    "datasets>=2.18.0",
+    "tqdm>=4.66.0",
+    "accelerate>=0.27.0",
+    "scikit-learn>=1.4.0",
+    "seaborn>=0.13.0",
+]

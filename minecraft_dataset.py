@@ -5,15 +5,19 @@ Minecraft Dataset loader for sequential frame prediction and action recognition 
 from __future__ import annotations
 
 import os
+import sys
+import warnings
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from pathlib import Path
-import sys
 
 # Add minecraft dataset path
 sys.path.append('datasets/minecraft')
 from read_data import action2word, voxel2word
+
+warnings.filterwarnings("ignore", message="CUDA initialization: Unexpected error from cudaGetDeviceCount().*")
 
 
 class MinecraftDataset(Dataset):
@@ -23,8 +27,9 @@ class MinecraftDataset(Dataset):
         self,
         data_dir: str = "datasets/minecraft/data",
         tokenizer=None,
-        max_length: int = 512,
+        max_length: int = 1024,
         context_examples=None,
+        history_length: int = 10,
         max_creative_scenes: int = 10,
         device: str | torch.device | None = None,
         num_workers: int | None = None,
@@ -37,6 +42,7 @@ class MinecraftDataset(Dataset):
             tokenizer: Tokenizer for text encoding (optional)
             max_length: Maximum sequence length for tokenization
             context_examples: List of example data pairs to use as context for in-context learning
+            history_length: Number of sequential frames to include when building history strings
             max_creative_scenes: Limit on how many creative episodes to load (default 10)
             device: Target torch device for batched tensors (defaults to CUDA when available)
             num_workers: Number of DataLoader workers (defaults to half the CPU cores)
@@ -47,6 +53,7 @@ class MinecraftDataset(Dataset):
         self.data_pairs = []
         self.context_examples = context_examples or []
         self.max_creative_scenes = max_creative_scenes
+        self.history_length = max(1, history_length)
         self.device = torch.device(
             device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -61,7 +68,7 @@ class MinecraftDataset(Dataset):
             raise ValueError(f"Dataset directory '{data_dir}' not found!")
 
     def load_data(self):
-        """Load sequential .npy files and create training pairs."""
+        """Load sequential .npy files and create training pairs with history strings."""
         creative_dirs = sorted(
             p for p in self.data_dir.rglob("*")
             if p.is_dir() and p.name.startswith("creative:")
@@ -85,27 +92,47 @@ class MinecraftDataset(Dataset):
                 continue
 
             print(f"Loading {len(npy_files)} frames from {creative_dir}")
-            total_frames += len(npy_files)
 
-            prev_frame = np.load(npy_files[0], allow_pickle=True).item()
-            for next_path in npy_files[1:]:
-                next_frame = np.load(next_path, allow_pickle=True).item()
+            frames = [np.load(path, allow_pickle=True).item() for path in npy_files]
+            total_frames += len(frames)
 
-                current_voxel_text = voxel2word(prev_frame['voxel'])
-                next_voxel_text = voxel2word(next_frame['voxel'])
-                action_text = action2word(prev_frame['action'])
+            frame_texts = [voxel2word(frame["voxel"]) for frame in frames]
+            frame_raws = [frame["voxel"] for frame in frames]
+            action_texts = [action2word(frame["action"]) for frame in frames[:-1]]
+            action_raws = [frame["action"] for frame in frames[:-1]]
+
+            if len(frames) <= self.history_length:
+                print(
+                    f"Skipping episode {creative_dir} for history_length {self.history_length}: "
+                    f"requires at least {self.history_length + 1} frames."
+                )
+                continue
+
+            for idx in range(self.history_length - 1, len(frames) - 1):
+                x_text = frame_texts[idx]
+                z_text = frame_texts[idx + 1]
+                y_text = action_texts[idx]
+
+                start_index = idx - self.history_length + 1
+                history_length_used = self.history_length
 
                 self.data_pairs.append({
-                    'x': current_voxel_text,
-                    'y': action_text,
-                    'z': next_voxel_text,
-                    'x_raw': prev_frame['voxel'],
-                    'y_raw': prev_frame['action'],
-                    'z_raw': next_frame['voxel'],
-                    'episode': creative_dir.name,
+                    "x": x_text,
+                    "y": y_text,
+                    "z": z_text,
+                    "x_raw": frame_raws[idx],
+                    "y_raw": action_raws[idx],
+                    "z_raw": frame_raws[idx + 1],
+                    "episode": creative_dir.name,
+                    "history_reconstruction": self._build_frame_action_history(
+                        frame_texts, action_texts, idx
+                    ),
+                    "history_action": self._build_frame_frame_action_history(
+                        frame_texts, action_texts, idx
+                    ),
+                    "history_start_index": start_index,
+                    "history_length_used": history_length_used,
                 })
-
-                prev_frame = next_frame
 
         if len(self.data_pairs) == 0:
             raise ValueError(
@@ -115,6 +142,31 @@ class MinecraftDataset(Dataset):
 
         print(f"Loaded {total_frames} frames across {len(creative_dirs)} episodes")
         print(f"Created {len(self.data_pairs)} training pairs")
+
+    def _build_frame_action_history(self, frame_texts, action_texts, idx: int) -> str:
+        """Construct frame/action alternating history ending with the current frame and action."""
+        start = idx - self.history_length + 1
+        parts = []
+        step = 1
+        for position in range(start, idx + 1):
+            parts.append(f"Frame {step}:\n{frame_texts[position]}")
+            parts.append(f"Action {step}:\n{action_texts[position]}")
+            step += 1
+        return "\n\n".join(parts).strip()
+
+    def _build_frame_frame_action_history(self, frame_texts, action_texts, idx: int) -> str:
+        """Construct frame/frame/action history ending with the current and next frames."""
+        start = idx - self.history_length + 1
+        parts = []
+        step = 1
+        for position in range(start, idx):
+            parts.append(f"Frame {step}:\n{frame_texts[position]}")
+            parts.append(f"Frame {step} Next:\n{frame_texts[position + 1]}")
+            parts.append(f"Action {step}:\n{action_texts[position]}")
+            step += 1
+        parts.append(f"Frame {step}:\n{frame_texts[idx]}")
+        parts.append(f"Frame {step} Next:\n{frame_texts[idx + 1]}")
+        return "\n\n".join(parts).strip()
 
     def __len__(self):
         return len(self.data_pairs)
@@ -178,19 +230,31 @@ class MinecraftDataset(Dataset):
         targets = []
 
         # Create context from examples (in-context learning)
-        context = ""
+        instruction_lines = [
+            "Predict the next frame using ONLY the pipe-delimited grid format.",
+            "Return the same number of rows as the input frame and do not add labels or commentary.",
+        ]
+
+        context_sections = ["\n".join(instruction_lines)]
         if self.context_examples:
-            context = "Here are some examples:\n\n"
+            example_lines = ["Here are some examples using history chains:"]
             for i, ex in enumerate(self.context_examples[:3], 1):  # Use up to 3 examples
-                context += f"Example {i}:\n"
-                context += f"Current Frame:\n{ex['x']}\n"
-                context += f"Action:\n{ex['y']}\n"
-                context += f"Next Frame:\n{ex['z']}\n\n"
-            context += "Now predict the next frame:\n\n"
+                history_text = ex.get("history_reconstruction") or (
+                    f"Frame:\n{ex['x']}\nAction:\n{ex['y']}"
+                )
+                example_lines.append(f"Example {i} History:\n{history_text}")
+                example_lines.append(f"Example {i} Next Frame:\n{ex['z']}\n")
+            example_lines.append("Now predict the next frame given the history:")
+            context_sections.append("\n".join(example_lines))
+
+        context = "\n\n".join(context_sections) + ("\n\n" if context_sections else "")
 
         for item in batch:
             # Format with context: examples + current query
-            input_text = context + f"Current Frame:\n{item['x']}\nAction:\n{item['y']}\nNext Frame:"
+            history_text = item.get("history_reconstruction") or (
+                f"Frame:\n{item['x']}\nAction:\n{item['y']}"
+            )
+            input_text = context + f"History:\n{history_text}\nNext Frame:"
             target_text = item['z']
 
             inputs.append(input_text)
@@ -219,24 +283,35 @@ class MinecraftDataset(Dataset):
 
         # Create context from examples (in-context learning)
         context_blocks = [
-            "Respond with ONLY the action block (three lines in the format shown).",
-            "The pattern always alternates as: Frame → Action → Frame → Action ...",
+            "Respond with ONLY the three-line action block in the exact format shown.",
+            "Each line must be of the form `category: value` matching the provided options.",
+            "History entries alternate `Frame` → `Frame Next` → `Action` for prior transitions.",
+            "Do not include explanations, labels, or extra text before or after the block.",
         ]
         if self.context_examples:
-            for ex in self.context_examples:
-                context_blocks.append(f"Frame:\n{ex['x']}")
-                context_blocks.append(f"Action:\n{ex['y']}")
-                context_blocks.append(f"Frame:\n{ex['z']}")
+            for ex in self.context_examples[:3]:
+                history_text = ex.get("history_action")
+                if history_text:
+                    context_blocks.append(f"History:\n{history_text}")
+                    context_blocks.append(f"Action:\n{ex['y']}")
+                else:
+                    context_blocks.append(f"Frame:\n{ex['x']}")
+                    context_blocks.append(f"Frame:\n{ex['z']}")
+                    context_blocks.append(f"Action:\n{ex['y']}")
         context = "\n\n".join(context_blocks) + "\n\n"
 
         for item in batch:
             # Format with context: examples + current query
-            input_text = (
-                context
-                + f"Frame:\n{item['x']}\n\n"
-                + f"Frame:\n{item['z']}\n\n"
-                + "Action:"
-            )
+            history_text = item.get("history_action")
+            if history_text:
+                input_text = context + f"History:\n{history_text}\nAction:"
+            else:
+                input_text = (
+                    context
+                    + f"Frame:\n{item['x']}\n\n"
+                    + f"Frame:\n{item['z']}\n\n"
+                    + "Action:"
+                )
             target_text = item['y'].strip()
 
             inputs.append(input_text)
@@ -275,4 +350,8 @@ if __name__ == "__main__":
     print(sample['y'])
     print("\nZ (Next Frame):")
     print(sample['z'])
+    print("\nHistory (Frame→Action chain):")
+    print(sample.get('history_reconstruction'))
+    print("\nHistory (Frame/Frame/Action pattern):")
+    print(sample.get('history_action'))
     print("="*80)

@@ -1,299 +1,100 @@
-# Minecraft Voxel World LLM Training Pipeline
+# Minecraft Voxel LLM Experiments
 
-A complete training pipeline for Large Language Models (LLMs) on Minecraft voxel-based sequential prediction tasks using Qwen 3 models.
+This project investigates two sequential reasoning tasks on Minecraft gameplay data using Qwen 3 language models. We evaluate both a lightweight 0.6B parameter model and a larger 4B parameter model under zero-shot (in-context) and LoRA fine-tuned regimes.
 
-## =� Overview
+## Dataset & Splits
 
-This project trains LLMs to:
-1. **Frame Prediction**: Predict next voxel state given current state + action
-2. **Action Recognition**: Predict action given current state + next state
+- Source: `datasets/minecraft/data/` organised as MineDojo-style `creative:{episode}` directories with `.npy` frame dumps.
+- Loader: `minecraft_dataset.MinecraftDataset` constructs paired samples containing the current frame (`x`), the next frame (`z`), the action (`y`), and history strings.
+- Splits:
+  - Experimental subset: `compute_dataset_splits(..., subset_fraction=0.05)` builds train/val/test indices for training and quick experimentation.
+  - Full test set: `INFERENCE_TEST_INDICES` (computed with `subset_fraction=1.0`) is used for all official evaluations to ensure consistency.
 
-## <� Key Features
+## Task Definitions
 
-- **In-Context Learning**: Few-shot prompting with training examples
-- **Supervised Fine-Tuning**: LoRA adaptation for efficient training
-- **Dual LoRA Tasks**: Frame reconstruction and action recognition coverage
-- **Comprehensive Evaluation**: Metrics, plots, and comparisons
+### D1 — Frame Reconstruction
 
-## =� Project Structure
+- **Input**: History `h` containing alternating frame/action text (`history_reconstruction`) ending at time *t*.
+- **Output**: Predicted next frame `ẑ`, matching the pipe-delimited grid format of the ground-truth frame `z`.
+- **Targets stored in dataset**: `pair["z"]` and `pair["history_reconstruction"]`.
 
-```
-llm/
- main.ipynb                  # Main training notebook
- minecraft_dataset.py        # Dataset loader with in-context learning
- datasets/
- minecraft/
-       data/              # .npy files with voxel + action data
- read_data.py       # Helper functions
- models/
-  Qwen3-0.6B/           # Local Qwen 3 0.6B model
- Qwen3-4B/             # Local Qwen 3 4B model
- checkpoints/              # Training checkpoints (auto-created)
- logs/                     # Training logs (auto-created)
- plots/                    # Generated plots (auto-created)
-*.json                    # Results and metadata files
-```
+### D2 — Action Recognition
 
-## =� Quick Start
+- **Input**: History `h` capturing frame–frame–action triplets (`history_action`) up to time *t+1*.
+- **Output**: Predicted action block `ŷ` describing straight/pan/jump decisions in a three-line format.
+- **Targets stored in dataset**: `pair["y"]` and `pair["history_action"]`.
 
-### Prerequisites
+## Models
 
-- Python 3.11+
-- CUDA-capable GPU (recommended)
-- uv package manager
+- **Qwen3-0.6B** (`MODEL_PATHS["qwen3-0.6b"]`)
+- **Qwen3-4B** (`MODEL_PATHS["qwen3-4b"]`)
+- Models are wrapped via `model_wrapper.ModelWrapper`, which supports zero-shot inference and optional LoRA adapters for fine-tuning.
 
-### Installation
+## Evaluation Workflow
 
-```bash
-# Navigate to project directory
-cd /path/to/nlp701-lab/project/llm
+### Zero-Shot (In-Context) Evaluation
 
-# Install dependencies (using uv)
-uv sync
-```
-
-### Running the Pipeline
-
-1. **Open the notebook**:
-   ```bash
-   jupyter lab main.ipynb
-   # or
-   code main.ipynb  # in VS Code
-   ```
-
-2. **Run cells sequentially**:
-   - **Cells 0.x**: Load infrastructure
-   - **Cells 1.x**: Load models and data
-   - **Cells 2.x**: In-context learning evaluation
-   - **Cells 3.x**: Supervised fine-tuning (optional)
-   - **Cells 4.x**: LoRA fine-tuning and evaluation for action recognition
-
-3. **Enable training** (optional):
-   ```python
-   # In cell 3.1 (frame reconstruction)
-   ENABLE_TRAINING = True
-
-   # In cell 4.1 (action recognition)
-   ENABLE_ACTION_TRAINING = True
-   ```
-
-## =� Dataset
-
-### Format
-
-Each `.npy` file contains:
-```python
-{
-    'action': np.array([straight, pan, jump]),  # 3D action vector
-    'voxel': np.array(3�3�3)                     # 3D block grid
-}
-```
-
-### Data Structure
-
-- **9 sequential frames** � **8 training pairs**
-- **Training pairs**: `(frame_i, action_i) � frame_(i+1)`
-- **Text format**: Voxels and actions converted to readable text
-
-### Example
-
-```
-Current Frame:
-|air|grass block|dirt|
-|air|grass block|dirt|
-...
-
-Action:
-straight: forward
-pan: left
-jump: jump
-
-Next Frame:
-|air|grass block|dirt|
-...
-```
-
-## > Models
-
-### Qwen 3 0.6B
-- **Location**: `models/Qwen3-0.6B/`
-- **Size**: 1.5 GB
-- **Vocab**: 151,669 tokens
-- **Use case**: Fast experimentation
-
-### Qwen 3 4B
-- **Location**: `models/Qwen3-4B/`
-- **Size**: 7.9 GB
-- **Vocab**: 151,669 tokens
-- **Use case**: Higher accuracy
-
-## =� Notebook Structure
-
-### 0. Infrastructure (Cells 0.1-0.4)
-- Utils module for file I/O
-- Model wrapper for training/evaluation
-- Plotting utilities
-- Hyperparameter configuration
-
-### 1. Setup (Cells 1.1-1.3)
-- Load Qwen 3 models
-- Load Minecraft dataset
-- Train/val/test split (70%/15%/15%)
-
-### 2. In-Context Learning (Cells 2.1-2.4)
-- Frame reconstruction evaluation (with 3 training examples as context)
-- Action recognition evaluation (with 3 training examples as context)
-- Visualization and metrics
-
-### 3. Supervised Fine-Tuning (Cells 3.1-3.3)
-- LoRA fine-tuning on frame reconstruction
-- Test set evaluation
-- Comparison plots
-
-### 4. LoRA Action Recognition (Cells 4.1-4.3)
-- LoRA fine-tuning on the action recognition task
-- Test-set evaluation and metric export
-- Comparison plots against the zero-shot baseline
-
-## =� Results
-
-Results are saved to JSON files:
-- `2.1-result.json`: Frame reconstruction (in-context learning)
-- `2.3-result.json`: Action recognition (in-context learning)
-- `3.2-result.json`: Frame reconstruction (LoRA fine-tuned)
-- `4.1-training-metadata.json`: Action recognition LoRA training runs
-- `4.2-result.json`: Action recognition (LoRA fine-tuned)
-
-Plots are saved to `plots/`:
-- Accuracy bar charts (e.g., `2.2-frame-reconstruction-accuracy.png`, `4.3-action-strict-accuracy.png`)
-- Metrics heatmaps (e.g., `2.4-action-heatmap.png`)
-- Training curves
-- Method comparisons (e.g., `4.3-action-macro-f1.png`)
-
-## =' Configuration
-
-### Hyperparameters
-
-```python
-DEFAULT_CONFIG = {
-    'learning_rate': 5e-5,
-    'num_epochs': 3,
-    'batch_size': 8,
-    'max_length': 512,
-    'lora_r': 8,
-    'lora_alpha': 32,
-    'lora_dropout': 0.1,
-}
-```
-
-### In-Context Learning
-
-- **Number of examples**: 3 (configurable via `num_context` parameter)
-- **Example selection**: First N from training set
-- **Format**: Examples prepended to each query
-
-## =� Key Features Explained
-
-### In-Context Learning
-
-The evaluation uses few-shot prompting by prepending training examples:
-
-```python
-context_examples = [train_data[i] for i in train_idx[:3]]
-eval_dataset = MinecraftDataset(
-    data_dir="datasets/minecraft/data",
-    context_examples=context_examples
-)
-```
-
-Each query is formatted as:
-```
-Here are some examples:
-
-Example 1:
-[training example 1]
-
-Example 2:
-[training example 2]
-
-Example 3:
-[training example 3]
-
-Now predict the next frame:
-[your query]
-```
+1. Load models and dataset (Section 1 of `main.ipynb`).
+2. Execute **Cell 2.1** for D1 and **Cell 2.3** for D2:
+   - Iterates through each model, calling `ModelWrapper.evaluate_task(...)` on `INFERENCE_TEST_INDICES`.
+   - Saves summaries:
+     - D1: `2.1-result.json` with aggregate metrics (`strict_match_accuracy`, `reconstruction_accuracy`, latency stats).
+     - D2: `2.3-result.json` with metrics (`strict_match_accuracy`, `word2vec_cosine`, `precision`, `recall`, `f1`, etc.).
+   - Saves raw outputs:
+     - D1: `2.1-raw.json` storing, per index, `history`, ground-truth `z_label`, and model `z_prediction`.
+     - D2: `2.3-raw.json` storing `history`, `y_label`, and `y_prediction`.
+3. Visualisation cells (2.2 & 2.4) consume these summaries to produce bar charts, heatmaps, and confusion matrices.
 
 ### LoRA Fine-Tuning
 
-Efficient fine-tuning using Low-Rank Adaptation:
-- Target modules: `q_proj`, `v_proj`
-- Rank: 8
-- Alpha: 32
-- Dropout: 0.1
+1. Sections 3 & 4 in the notebook handle LoRA training for D1 and D2 respectively (configurable via `hyperparameter_config.HyperparameterConfig`).
+2. Fine-tuned checkpoints are evaluated on the same `INFERENCE_TEST_INDICES`, producing:
+   - D1 results: `3.2-result.json`.
+   - D2 results: `4.2-result.json`.
+3. Comparative plots in Sections 3.3 and 4.3 contrast zero-shot vs. fine-tuned metrics for each model.
 
-### Reinforcement Learning
+### Raw Output Structure
 
-Simplified policy gradient approach:
-- Environment: Gym-like interface
-- Reward: Action matching score
-- Episodes: Configurable (default: 10)
+Each raw JSON file (`2.1-raw.json`, `2.3-raw.json`, etc.) is keyed by model identifier:
 
-## =� Notes
-
-### Current Dataset
-- **Limitation**: All 9 frames have identical states (demo data)
-- **For real training**: Collect diverse Minecraft gameplay sequences
-
-### Memory Management
-- Models loaded on-demand
-- Automatic cleanup after evaluation
-- Supports both GPU and CPU
-
-### Checkpoints
-- Resume from latest checkpoint automatically
-- Best model saved based on validation loss
-- Metadata includes training configuration
-
-## = Troubleshooting
-
-### Out of Memory
-```python
-# Reduce batch size
-config.update_config({'batch_size': 4})
-
-# Use smaller model
-model_name = 'qwen3-0.6b'
+```json
+{
+  "qwen3-0.6b": [
+    {
+      "index": 12,
+      "episode": "creative:42",
+      "history": "...",
+      "z_label": "...",
+      "z_prediction": "..."
+    }
+  ],
+  "qwen3-4b": [...]
+}
 ```
 
-### CUDA Errors
-```python
-# Force CPU mode
-device = "cpu"
-model_wrapper = ModelWrapper(model_name, device="cpu")
-```
+This layout simplifies downstream error analysis, enabling side-by-side inspection of history strings, labels, and predictions.
 
-### Import Errors
-```bash
-# Reinstall dependencies
-uv sync --refresh
-```
+## Reproducing Experiments
 
-## =� References
+1. Install dependencies (see `.python-version` and project environment setup).
+2. Open `main.ipynb` and execute cells sequentially:
+   - Section 1: setup and dataset preview.
+   - Section 2: zero-shot evaluation & plotting.
+   - Sections 3 & 4: optional LoRA fine-tuning and evaluation.
+3. Generated artefacts:
+   - Metrics: `2.1-result.json`, `2.3-result.json`, `3.2-result.json`, `4.2-result.json`.
+   - Raw outputs: `2.1-raw.json`, `2.3-raw.json`.
+   - Plots: stored under `plots/`.
 
-- **Qwen Models**: [https://github.com/QwenLM/Qwen](https://github.com/QwenLM/Qwen)
-- **LoRA**: [https://arxiv.org/abs/2106.09685](https://arxiv.org/abs/2106.09685)
-- **Minecraft**: [https://www.minecraft.net](https://www.minecraft.net)
+## Directory Guide
 
-## =� License
+- `hyperparameter_config.py` – consolidated hyperparameter defaults and grid search utilities.
+- `model_wrapper.py` – handles generation, metric computation, and checkpoint loading.
+- `dataset_utils.py` – split computations, dataloader builders, embeddings for action similarity.
+- `plot_utils.py` – heatmaps, metric bars, confusion matrices for reporting.
+- `notebook/` – auxiliary notebooks or exported figures (if present).
 
-This project is for educational purposes (NLP 701 Lab).
+## Notes
 
-## =e Authors
-
-NLP 701 Lab Project Team
-
-## =O Acknowledgments
-
-- Qwen team for the excellent models
-- Minecraft community for inspiration
-- Course instructors and TAs
+- Ensure the dataset tree follows the documented layout in `datasets/minecraft/README.md`.
+- For reproducible evaluations, the notebook saves results deterministically; rerunning 2.1/2.3 overwrites the corresponding JSON files.

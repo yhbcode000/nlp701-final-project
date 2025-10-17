@@ -19,6 +19,7 @@ logs/
 plots/
 grid-search-record.json
 *-result.json
+*-raw.json
 *-training-metadata*.json
 
 # Large local resources

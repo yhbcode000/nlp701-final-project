@@ -2,11 +2,13 @@
 Minecraft Dataset loader for sequential frame prediction and action recognition tasks.
 """
 
+from __future__ import annotations
+
+import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
-import glob
 import sys
 
 # Add minecraft dataset path
@@ -17,7 +19,16 @@ from read_data import action2word, voxel2word
 class MinecraftDataset(Dataset):
     """Dataset for Minecraft voxel-based frame prediction and action recognition."""
 
-    def __init__(self, data_dir: str = "datasets/minecraft/data", tokenizer=None, max_length: int = 512, context_examples=None):
+    def __init__(
+        self,
+        data_dir: str = "datasets/minecraft/data",
+        tokenizer=None,
+        max_length: int = 512,
+        context_examples=None,
+        max_creative_scenes: int = 10,
+        device: str | torch.device | None = None,
+        num_workers: int | None = None,
+    ):
         """
         Initialize Minecraft dataset.
 
@@ -26,12 +37,23 @@ class MinecraftDataset(Dataset):
             tokenizer: Tokenizer for text encoding (optional)
             max_length: Maximum sequence length for tokenization
             context_examples: List of example data pairs to use as context for in-context learning
+            max_creative_scenes: Limit on how many creative episodes to load (default 10)
+            device: Target torch device for batched tensors (defaults to CUDA when available)
+            num_workers: Number of DataLoader workers (defaults to half the CPU cores)
         """
         self.data_dir = Path(data_dir)
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.data_pairs = []
         self.context_examples = context_examples or []
+        self.max_creative_scenes = max_creative_scenes
+        self.device = torch.device(
+            device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+
+        cpu_count = os.cpu_count() or 1
+        default_workers = max(1, cpu_count // 2)
+        self.num_workers = num_workers if num_workers is not None else default_workers
 
         if self.data_dir.exists():
             self.load_data()
@@ -40,39 +62,58 @@ class MinecraftDataset(Dataset):
 
     def load_data(self):
         """Load sequential .npy files and create training pairs."""
-        # Get all .npy files sorted by name
-        npy_files = sorted(glob.glob(str(self.data_dir / "*.npy")))
+        creative_dirs = sorted(
+            p for p in self.data_dir.rglob("*")
+            if p.is_dir() and p.name.startswith("creative:")
+        )
 
-        if len(npy_files) < 2:
-            raise ValueError(f"Need at least 2 files for sequential pairs, found {len(npy_files)}")
+        if self.max_creative_scenes is not None:
+            creative_dirs = creative_dirs[: self.max_creative_scenes]
 
-        print(f"Loading {len(npy_files)} frames from {self.data_dir}")
+        if not creative_dirs:
+            raise ValueError(
+                f"No creative episodes found under '{self.data_dir}'. "
+                "Expected directories like seq0-49/creative:0/."
+            )
 
-        # Load all frames
-        frames = []
-        for npy_file in npy_files:
-            data = np.load(npy_file, allow_pickle=True).item()
-            frames.append(data)
+        total_frames = 0
+        for creative_dir in creative_dirs:
+            npy_files = sorted(creative_dir.glob("*.npy"))
 
-        # Create sequential pairs: (frame_i, action_i) -> frame_(i+1)
-        for i in range(len(frames) - 1):
-            current_frame = frames[i]
-            next_frame = frames[i + 1]
+            if len(npy_files) < 2:
+                print(f"Skipping {creative_dir} (only {len(npy_files)} frame)")
+                continue
 
-            # Convert voxel and action to text
-            current_voxel_text = voxel2word(current_frame['voxel'])
-            next_voxel_text = voxel2word(next_frame['voxel'])
-            action_text = action2word(current_frame['action'])
+            print(f"Loading {len(npy_files)} frames from {creative_dir}")
+            total_frames += len(npy_files)
 
-            self.data_pairs.append({
-                'x': current_voxel_text,  # Current frame voxel
-                'y': action_text,          # Action taken
-                'z': next_voxel_text,      # Next frame voxel
-                'x_raw': current_frame['voxel'],  # Raw voxel data
-                'y_raw': current_frame['action'],  # Raw action data
-                'z_raw': next_frame['voxel']       # Raw next voxel data
-            })
+            prev_frame = np.load(npy_files[0], allow_pickle=True).item()
+            for next_path in npy_files[1:]:
+                next_frame = np.load(next_path, allow_pickle=True).item()
 
+                current_voxel_text = voxel2word(prev_frame['voxel'])
+                next_voxel_text = voxel2word(next_frame['voxel'])
+                action_text = action2word(prev_frame['action'])
+
+                self.data_pairs.append({
+                    'x': current_voxel_text,
+                    'y': action_text,
+                    'z': next_voxel_text,
+                    'x_raw': prev_frame['voxel'],
+                    'y_raw': prev_frame['action'],
+                    'z_raw': next_frame['voxel'],
+                    'episode': creative_dir.name,
+                })
+
+                prev_frame = next_frame
+
+        if len(self.data_pairs) == 0:
+            raise ValueError(
+                f"No sequential frame pairs created from '{self.data_dir}'. "
+                "Ensure each creative directory contains at least two frames."
+            )
+
+        print(f"Loaded {total_frames} frames across {len(creative_dirs)} episodes")
         print(f"Created {len(self.data_pairs)} training pairs")
 
     def __len__(self):
@@ -119,8 +160,17 @@ class MinecraftDataset(Dataset):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
-        return DataLoader(self, batch_size=batch_size, shuffle=shuffle,
-                         collate_fn=collate_fn)
+        num_workers = getattr(self, "num_workers", 0)
+        device = getattr(self, "device", torch.device("cpu"))
+
+        return DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            collate_fn=collate_fn,
+            num_workers=num_workers,
+            pin_memory=device.type == "cuda",
+        )
 
     def collate_frame_reconstruction(self, batch, tokenizer):
         """Collate function for frame reconstruction task."""
@@ -146,13 +196,10 @@ class MinecraftDataset(Dataset):
             inputs.append(input_text)
             targets.append(target_text)
 
-        # Tokenize
-        input_enc = tokenizer(inputs, padding=True, truncation=True,
-                             max_length=self.max_length, return_tensors='pt')
-        target_enc = tokenizer(targets, padding=True, truncation=True,
-                              max_length=self.max_length, return_tensors='pt')
-
         # Create labels (input + target concatenated for causal LM)
+        if tokenizer is None:
+            raise ValueError("Tokenizer required for frame reconstruction task.")
+
         full_texts = [inp + tgt for inp, tgt in zip(inputs, targets)]
         full_enc = tokenizer(full_texts, padding=True, truncation=True,
                             max_length=self.max_length, return_tensors='pt')
@@ -161,6 +208,7 @@ class MinecraftDataset(Dataset):
             'input_ids': full_enc['input_ids'],
             'attention_mask': full_enc['attention_mask'],
             'labels': full_enc['input_ids'].clone(),
+            'prompt_text': inputs,
             'target_text': targets
         }
 
@@ -194,13 +242,10 @@ class MinecraftDataset(Dataset):
             inputs.append(input_text)
             targets.append(target_text)
 
-        # Tokenize
-        input_enc = tokenizer(inputs, padding=True, truncation=True,
-                             max_length=self.max_length, return_tensors='pt')
-        target_enc = tokenizer(targets, padding=True, truncation=True,
-                              max_length=self.max_length, return_tensors='pt')
-
         # Create labels
+        if tokenizer is None:
+            raise ValueError("Tokenizer required for action recognition task.")
+
         full_texts = [inp + tgt for inp, tgt in zip(inputs, targets)]
         full_enc = tokenizer(full_texts, padding=True, truncation=True,
                             max_length=self.max_length, return_tensors='pt')
@@ -209,13 +254,14 @@ class MinecraftDataset(Dataset):
             'input_ids': full_enc['input_ids'],
             'attention_mask': full_enc['attention_mask'],
             'labels': full_enc['input_ids'].clone(),
+            'prompt_text': inputs,
             'target_text': targets
         }
 
 
 # Test loading
 if __name__ == "__main__":
-    dataset = MinecraftDataset()
+    dataset = MinecraftDataset(max_creative_scenes=2)
     print(f"\nDataset loaded with {len(dataset)} pairs")
 
     # Print first sample

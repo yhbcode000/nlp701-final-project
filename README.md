@@ -43,19 +43,21 @@ This project investigates two sequential reasoning tasks on Minecraft gameplay d
    - Saves raw outputs:
      - D1: `2.1-raw.json` storing, per index, `history`, ground-truth `z_label`, and model `z_prediction`.
      - D2: `2.3-raw.json` storing `history`, `y_label`, and `y_prediction`.
+   - When both files already exist, the cells skip inference and load the cached JSON artefacts directly.
 3. Visualisation cells (2.2 & 2.4) consume these summaries to produce bar charts, heatmaps, and confusion matrices.
 
 ### LoRA Fine-Tuning
 
 1. Sections 3 & 4 in the notebook handle LoRA training for D1 and D2 respectively (configurable via `hyperparameter_config.HyperparameterConfig`).
 2. Fine-tuned checkpoints are evaluated on the same `INFERENCE_TEST_INDICES`, producing:
-   - D1 results: `3.2-result.json`.
-   - D2 results: `4.2-result.json`.
+   - D1 results: `3.2-result.json` and detailed outputs in `3.2-raw.json`.
+   - D2 results: `4.2-result.json` and detailed outputs in `4.2-raw.json`.
+   Cached result/raw pairs are reused automatically on subsequent runs.
 3. Comparative plots in Sections 3.3 and 4.3 contrast zero-shot vs. fine-tuned metrics for each model.
 
 ### Raw Output Structure
 
-Each raw JSON file (`2.1-raw.json`, `2.3-raw.json`, etc.) is keyed by model identifier:
+Each raw JSON file (`2.1-raw.json`, `2.3-raw.json`, `3.2-raw.json`, `4.2-raw.json`) is keyed by model identifier:
 
 ```json
 {
@@ -72,7 +74,7 @@ Each raw JSON file (`2.1-raw.json`, `2.3-raw.json`, etc.) is keyed by model iden
 }
 ```
 
-This layout simplifies downstream error analysis, enabling side-by-side inspection of history strings, labels, and predictions.
+Frame reconstruction entries use `z_label` / `z_prediction`, while action recognition entries use `y_label` / `y_prediction`. This layout simplifies downstream error analysis, enabling side-by-side inspection of history strings, labels, and predictions.
 
 ## Reproducing Experiments
 
@@ -81,9 +83,9 @@ This layout simplifies downstream error analysis, enabling side-by-side inspecti
    - Section 1: setup and dataset preview.
    - Section 2: zero-shot evaluation & plotting.
    - Sections 3 & 4: optional LoRA fine-tuning and evaluation.
-3. Generated artefacts:
+3. Generated artefacts (created if missing, otherwise reused):
    - Metrics: `2.1-result.json`, `2.3-result.json`, `3.2-result.json`, `4.2-result.json`.
-   - Raw outputs: `2.1-raw.json`, `2.3-raw.json`.
+   - Raw outputs: `2.1-raw.json`, `2.3-raw.json`, `3.2-raw.json`, `4.2-raw.json`.
    - Plots: stored under `plots/`.
 
 ## Directory Guide

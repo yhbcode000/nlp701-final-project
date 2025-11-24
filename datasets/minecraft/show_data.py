@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -27,11 +28,52 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (needed for 3D projection
 
 _ANIMATIONS: list[animation.FuncAnimation] = []
 _NON_INTERACTIVE_BACKENDS = {"agg", "cairoagg", "svg", "pdf", "ps"}
+DEFAULT_COLORS_FILE = Path("color.json")
+KNOWN_COLORS = {
+    "grass": "#4caf50",
+    "grass block": "#4caf50",
+    "dirt": "#8b5a2b",
+    "stone": "#7d7d7d",
+    "wood": "#a67c52",
+    "log": "#a67c52",
+    "leaves": "#2e8b57",
+    "flower": "#ff69b4",
+    "water": "#1e90ff",
+    "sand": "#d2b48c",
+}
 
 
 def _is_interactive_backend() -> bool:
     backend = plt.get_backend().lower()
     return not any(tag in backend for tag in _NON_INTERACTIVE_BACKENDS)
+
+
+def _hex_to_rgb_tuple(hex_str: str) -> Tuple[float, float, float]:
+    hex_str = hex_str.lstrip("#")
+    if len(hex_str) == 3:
+        hex_str = "".join([c * 2 for c in hex_str])
+    r = int(hex_str[0:2], 16) / 255.0
+    g = int(hex_str[2:4], 16) / 255.0
+    b = int(hex_str[4:6], 16) / 255.0
+    return (r, g, b)
+
+
+def load_color_map(colors_path: Path) -> Dict[str, str]:
+    if colors_path.exists():
+        try:
+            with colors_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {k: v for k, v in data.items() if isinstance(v, str)}
+        except Exception:
+            pass
+    return {}
+
+
+def save_color_map(colors_path: Path, color_map: Dict[str, str]) -> None:
+    colors_path.parent.mkdir(parents=True, exist_ok=True)
+    with colors_path.open("w", encoding="utf-8") as f:
+        json.dump(color_map, f, indent=2, ensure_ascii=False)
 
 def load_frame(path: Path) -> dict:
     """Load full frame dict from a .npy file."""
@@ -71,14 +113,29 @@ def center_crop(voxel: np.ndarray, dim: int) -> np.ndarray:
     ]
 
 
-def build_color_map(blocks: np.ndarray) -> Dict[str, Tuple[float, float, float]]:
-    """Assign a unique color to each block type."""
+def build_color_map(blocks: np.ndarray, colors_path: Path = DEFAULT_COLORS_FILE) -> Dict[str, Tuple[float, float, float]]:
+    """Assign a persistent color to each block type using color.json."""
     unique_blocks = sorted(b for b in set(blocks.flatten().tolist()) if b != "air")
+    stored = load_color_map(colors_path)
+    updated = False
+
     cmap = plt.get_cmap("tab20")
-    colors = {}
+    color_hex: Dict[str, str] = dict(stored)
+
     for idx, block in enumerate(unique_blocks):
-        colors[block] = cmap(idx % cmap.N)
-    return colors
+        if block in color_hex:
+            continue
+        if block.lower() in KNOWN_COLORS:
+            color_hex[block] = KNOWN_COLORS[block.lower()]
+        else:
+            r, g, b, _ = cmap(idx % cmap.N)
+            color_hex[block] = "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+        updated = True
+
+    if updated:
+        save_color_map(colors_path, color_hex)
+
+    return {blk: _hex_to_rgb_tuple(hex_color) for blk, hex_color in color_hex.items()}
 
 
 def render_static(voxel: np.ndarray, dim: int, action_text: str | None = None, output: Path | None = None) -> None:
@@ -86,15 +143,25 @@ def render_static(voxel: np.ndarray, dim: int, action_text: str | None = None, o
     color_map = build_color_map(np.array(list(set(voxel.flatten().tolist()))))
     voxel, xs, ys, zs, labels, colors = frame_to_points(voxel, dim, color_map)
 
-    if not xs:
-        print("No non-air blocks to plot.")
-        return
-
     fig = plt.figure(figsize=(6, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    # Map X/Z to the ground plane, Y to vertical; use squares.
-    scatter = ax.scatter(xs, zs, ys, c=colors, s=60, depthshade=True, marker="s")
+    if xs:
+        for x, y, z, label in zip(xs, ys, zs, labels):
+            r, g, b = color_map.get(label, (0.5, 0.5, 0.5))
+            ax.bar3d(
+                x,
+                z,
+                y,
+                1,
+                1,
+                1,
+                color=(r, g, b, 0.5),
+                edgecolor=(r, g, b, 0.5),
+                shade=True,
+            )
+    else:
+        print("No non-air blocks to plot.")
 
     ax.set_xlabel("X (forward/back)")
     ax.set_ylabel("Z (left/right)")
@@ -155,7 +222,22 @@ def animate_frames(voxels: list[np.ndarray], actions: list[str], dim: int, outpu
 
     fig = plt.figure(figsize=(6, 6))
     ax = fig.add_subplot(111, projection="3d")
-    scatter = ax.scatter(xs0, zs0, ys0, c=colors0, s=60, depthshade=True, marker="s")
+    bars = []
+    if xs0:
+        for x, y, z, label in zip(xs0, ys0, zs0, labels0):
+            r, g, b = color_map.get(label, (0.5, 0.5, 0.5))
+            bar = ax.bar3d(
+                x,
+                z,
+                y,
+                1,
+                1,
+                1,
+                color=(r, g, b, 0.5),
+                edgecolor=(r, g, b, 0.5),
+                shade=True,
+            )
+            bars.append(bar)
 
     ax.set_xlabel("X (forward/back)")
     ax.set_ylabel("Z (left/right)")
@@ -173,16 +255,32 @@ def animate_frames(voxels: list[np.ndarray], actions: list[str], dim: int, outpu
     plt.tight_layout()
 
     def update(frame_idx: int):
+        # Remove previous bars
+        while bars:
+            bar = bars.pop()
+            try:
+                bar.remove()
+            except Exception:
+                pass
         voxel, xs, ys, zs, labels, colors = frame_to_points(voxels[frame_idx], dim, color_map)
         if xs:
-            scatter._offsets3d = (xs, zs, ys)
-            scatter.set_color(colors)
-        else:
-            scatter._offsets3d = ([], [], [])
-            scatter.set_color([])
+            for x, y, z, label in zip(xs, ys, zs, labels):
+                r, g, b = color_map.get(label, (0.5, 0.5, 0.5))
+                bar = ax.bar3d(
+                    x,
+                    z,
+                    y,
+                    1,
+                    1,
+                    1,
+                    color=(r, g, b, 0.5),
+                    edgecolor=(r, g, b, 0.5),
+                    shade=True,
+                )
+                bars.append(bar)
         action_text = actions[frame_idx] if frame_idx < len(actions) else ""
         ax.set_title(f"Frame {frame_idx}\n{action_text}")
-        return scatter,
+        return bars
 
     anim = animation.FuncAnimation(fig, update, frames=len(voxels), interval=500, blit=False, repeat=True)
     # Keep references to avoid garbage collection before rendering.

@@ -9,12 +9,24 @@ from minecraft_dataset import MinecraftDataset
 warnings.filterwarnings("ignore", message="CUDA initialization: Unexpected error from cudaGetDeviceCount().*")
 
 
-def load_full_dataset(config, data_dir: str | Path) -> Tuple[MinecraftDataset, int, Sequence[str]]:
-    """Load the Minecraft dataset using the configured maximum length."""
+def load_full_dataset(
+    config,
+    data_dir: str | Path,
+    *,
+    voxel_size: int | None = None,
+) -> Tuple[MinecraftDataset, int, Sequence[str]]:
+    """Load the Minecraft dataset using the configured maximum length.
+
+    The `voxel_size` argument lets you override the cube window passed into
+    `voxel2word` (defaults to 5 if not provided).
+    """
     resolved_dir = Path(data_dir)
+    config_dict = config.get_config()
+    resolved_voxel_size = voxel_size if voxel_size is not None else config_dict.get("voxel_size", 5)
     dataset = MinecraftDataset(
         data_dir=str(resolved_dir),
-        max_length=config.get_config()["max_length"],
+        max_length=config_dict["max_length"],
+        voxel_size=resolved_voxel_size,
     )
 
     total_pairs = len(dataset)

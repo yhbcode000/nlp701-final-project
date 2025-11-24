@@ -74,6 +74,7 @@ def create_dataset_subset(
     subset.context_examples = list(context_examples or [])
     subset.history_length = dataset.history_length
     subset.max_creative_scenes = dataset.max_creative_scenes
+    subset.voxel_size = getattr(dataset, "voxel_size", 5)
     subset.device = dataset.device
     subset.num_workers = getattr(dataset, "num_workers", 0)
     subset.data_pairs = [dataset.data_pairs[i] for i in indices]

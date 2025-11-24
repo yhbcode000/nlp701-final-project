@@ -33,6 +33,7 @@ class MinecraftDataset(Dataset):
         max_creative_scenes: int = 10,
         device: str | torch.device | None = None,
         num_workers: int | None = None,
+        voxel_size: int = 5,
     ):
         """
         Initialize Minecraft dataset.
@@ -46,6 +47,7 @@ class MinecraftDataset(Dataset):
             max_creative_scenes: Limit on how many creative episodes to load (default 10)
             device: Target torch device for batched tensors (defaults to CUDA when available)
             num_workers: Number of DataLoader workers (defaults to half the CPU cores)
+            voxel_size: Side length of the cubic voxel window to convert to text (passed to voxel2word)
         """
         self.data_dir = Path(data_dir)
         self.tokenizer = tokenizer
@@ -54,6 +56,7 @@ class MinecraftDataset(Dataset):
         self.context_examples = context_examples or []
         self.max_creative_scenes = max_creative_scenes
         self.history_length = max(1, history_length)
+        self.voxel_size = voxel_size
         self.device = torch.device(
             device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -96,7 +99,7 @@ class MinecraftDataset(Dataset):
             frames = [np.load(path, allow_pickle=True).item() for path in npy_files]
             total_frames += len(frames)
 
-            frame_texts = [voxel2word(frame["voxel"]) for frame in frames]
+            frame_texts = [voxel2word(frame["voxel"], size=self.voxel_size) for frame in frames]
             frame_raws = [frame["voxel"] for frame in frames]
             action_texts = [action2word(frame["action"]) for frame in frames[:-1]]
             action_raws = [frame["action"] for frame in frames[:-1]]

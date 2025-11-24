@@ -95,8 +95,14 @@ Frame reconstruction entries use `z_label` / `z_prediction`, while action recogn
 - `dataset_utils.py` – split computations, dataloader builders, embeddings for action similarity.
 - `plot_utils.py` – heatmaps, metric bars, confusion matrices for reporting.
 - `notebook/` – auxiliary notebooks or exported figures (if present).
+- `run_frame_reconstruction_exp.sh` / `run_action_recognition_exp.sh` – shell drivers that iterate voxel sizes {3,5,7,9,11}, run inference + eval (via `uv run`), and then trigger plotting.
+- `plot_frame_reconstruction_exp.py` – reads `evals/*_frame_reconstruction_eval.csv` and plots mean BLEU/similarity vs voxel size plus per-size KDEs into `plots/`.
+- `plot_action_recognition_exp.py` – reads `evals/*_action_recognition_eval.csv` and plots per-dimension (straight/pan/jump) accuracy vs voxel size into `plots/`.
+- `evals/` – CSV exports from eval scripts (per-model, size-tagged).
+- `results/` – JSON summaries and raw outputs from inference/eval runs (size-tagged).
 
 ## Notes
 
 - Ensure the dataset tree follows the documented layout in `datasets/minecraft/README.md`.
 - For reproducible evaluations, the notebook saves results deterministically; rerunning 2.1/2.3 overwrites the corresponding JSON files.
+- The provided run scripts expect `uv` to be available (`pip install uv`). They will loop through predefined voxel sizes, write outputs to `results/` and `evals/`, and refresh plots in `plots/`. Set `OPENAI_API_KEY` before running the eval steps.

@@ -15,6 +15,9 @@ datasets/minecraft/
 │   │   └── ...
 │   ├── creative:1/
 │   └── ...
+├── preprocess_data.py
+├── filter_data.py
+├── show_data.py
 ├── read_data.py
 └── README.md
 ```
@@ -53,6 +56,24 @@ or (for action recognition) `(voxel_t, voxel_{t+1})` predicts `action_t`.
 
 Keeping these conventions ensures the existing loaders continue to work
 without modification.
+
+### Utility scripts
+
+- `preprocess_data.py` — Relabel actions by inferring per-axis motion between
+  consecutive frames. The script independently scores shifts along x
+  (forward/back), z (left/right), and y (jump), then writes the corresponding
+  `[straight, pan, jump]` vector back to each frame. Run:
+  `python3 preprocess_data.py --data-dir data`.
+- `filter_data.py` — Collapse consecutive `[0, 0, 0]` actions within each
+  episode, keeping only the first occurrence and reindexing the remaining
+  frames (filenames reset to `000000.npy`, …). Run:
+  `python3 filter_data.py --data-dir data`.
+- `show_data.py` — Visualize frames in 3D (squares on the X/Z ground plane,
+  Y vertical) and include the action for each frame. With `--output` you can
+  save static PNGs or animated GIFs (for a creative directory) without an
+  interactive backend:
+  - Single frame: `python3 show_data.py --path data/creative:0/000000.npy --dim 5 --output frame.png`
+  - Animation: `python3 show_data.py --path data/creative:0 --dim 5 --output episode.gif`
 
 ### Loader expectations
 

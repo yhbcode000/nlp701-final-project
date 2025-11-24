@@ -33,11 +33,16 @@ def action2word(action):
         word += "jump\n"
     return word
 
-def voxel2word(voxel):
+def voxel2word(voxel, size=5):
     '''
     the word is in the type of | | |  |\n with the type of string
     # 左下角为原点, 从下到上，从左到右
     '''
+    voxel_size = voxel.shape[0]
+    assert voxel_size >= size
+    n = int((size - 1) / 2)
+    orgin = int((voxel_size - 1) / 2)
+    voxel = voxel[orgin - n:orgin + n + 1, orgin - n:orgin + n + 1, orgin - n:orgin + n + 1]
     word = ""
 
     # Get the block_name array from voxel observation
@@ -93,6 +98,8 @@ class MineDojoDataset(Dataset):
             "action": action,
             "voxel": voxel,
         }
+
+        # print(voxel2word(sample['voxel']))
         
         if self.transform:
             sample = self.transform(sample)

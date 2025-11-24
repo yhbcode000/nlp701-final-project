@@ -237,6 +237,8 @@ class MinecraftDataset(Dataset):
             "Predict the next frame using ONLY the pipe-delimited grid format.",
             "Return the same number of rows as the input frame and do NOT add labels, reasoning, or commentary.",
             "DO NOT think aloud—output the grid only, nothing else.",
+            "Do not prepend headings or words like 'Prediction'; just the grid.",
+            "Keep rows pipe-delimited with the same row/column count as shown in the history frames."
         ]
 
         context_sections = ["\n".join(instruction_lines)]
@@ -292,6 +294,8 @@ class MinecraftDataset(Dataset):
             "History entries alternate `Frame` → `Frame Next` → `Action` for prior transitions.",
             "Do NOT include explanations, reasoning, labels, or extra text before or after the block.",
             "DO NOT think aloud—output the three lines only, nothing else.",
+            "Do not add prefixes like 'Prediction'; respond with just the three lines.",
+            "Exactly three lines are allowed:\nstraight: <noop|forward|backward>\npan: <noop|left|right>\njump: <noop|jump>."
         ]
         if self.context_examples:
             for ex in self.context_examples[:3]:

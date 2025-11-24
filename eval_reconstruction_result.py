@@ -30,15 +30,10 @@ def strip_code_fences(text: str) -> str:
 def extract_grid_with_openai(raw_text: str, client: OpenAI, model: str, size: int) -> str:
     lines_needed = size * size
     system_msg = (
-        "You are a strict cleaner/normalizer for Minecraft FRAME RECONSTRUCTION outputs.\n"
-        "The model was asked to predict the next frame given the history. Your ONLY job is to extract that predicted grid.\n"
-        "Requirements:\n"
-        f"- Output exactly {lines_needed} lines ({size}x{size}x{size} flattened), each row formatted like "
-        f"'|block|block|...|block|' with exactly {size} entries.\n"
-        "- Preserve the order and count; no labels, no narration, no reasoning, no metadata.\n"
-        "- Ignore or remove any extra text, explanations, or action notes in the input.\n"
-        f"- If the grid is incomplete, fill or infer sensibly but still return {lines_needed} rows in the exact format.\n"
-        "Return ONLY the cleaned grid lines and nothing else."
+        "You clean Minecraft voxel grid predictions. "
+        "Extract ONLY the predicted next frame as pipe-delimited rows. "
+        f"Return exactly {lines_needed} lines ({size}x{size}x{size} flattened), each like '|block|...|block|'. "
+        "Do not include prose, labels, reasoning, or actions—just the grid lines."
     )
     user_msg = (
         f"{raw_text}\n\n"

@@ -27,16 +27,23 @@ def strip_code_fences(text: str) -> str:
     return text.strip()
 
 
-def extract_grid_with_openai(raw_text: str, client: OpenAI, model: str) -> str:
+def extract_grid_with_openai(raw_text: str, client: OpenAI, model: str, size: int) -> str:
+    lines_needed = size * size
     system_msg = (
-        "You clean Minecraft voxel grid predictions. "
-        "Extract ONLY the next frame grid: 25 lines, each like "
-        "'|block|block|block|block|block|'. No prose, labels, or actions."
+        "You are a strict cleaner/normalizer for Minecraft FRAME RECONSTRUCTION outputs.\n"
+        "The model was asked to predict the next frame given the history. Your ONLY job is to extract that predicted grid.\n"
+        "Requirements:\n"
+        f"- Output exactly {lines_needed} lines ({size}x{size}x{size} flattened), each row formatted like "
+        f"'|block|block|...|block|' with exactly {size} entries.\n"
+        "- Preserve the order and count; no labels, no narration, no reasoning, no metadata.\n"
+        "- Ignore or remove any extra text, explanations, or action notes in the input.\n"
+        f"- If the grid is incomplete, fill or infer sensibly but still return {lines_needed} rows in the exact format.\n"
+        "Return ONLY the cleaned grid lines and nothing else."
     )
     user_msg = (
-        "Return just the grid lines separated by newlines. "
-        "If unsure, output your best attempt at a 5x5 grid.\n\n"
-        f"{raw_text}"
+        f"{raw_text}\n\n"
+        "Task: Return ONLY the grid lines separated by newlines—no extra text. "
+        f"If unsure, output your best attempt at a {size}x{size} grid."
     )
     resp = client.chat.completions.create(
         model=model,
@@ -165,7 +172,7 @@ def evaluate_model(
 
     rows: List[Dict[str, object]] = []
     for entry in tqdm(data[model_name], desc=f"Cleaning {model_name}", unit="record"):
-        cleaned_pred = extract_grid_with_openai(entry["z_prediction"], client, openai_model)
+        cleaned_pred = extract_grid_with_openai(entry["z_prediction"], client, openai_model, size)
         label_text = entry["z_label"]
         bleu_score = bleu_no_newlines(label_text, cleaned_pred)
 

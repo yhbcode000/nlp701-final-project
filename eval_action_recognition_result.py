@@ -36,14 +36,20 @@ def strip_code_fences(text: str) -> str:
 
 def extract_action_block_with_openai(raw_text: str, client: OpenAI, model: str) -> str:
     system_msg = (
-        "You clean Minecraft action predictions. "
-        "Return EXACTLY three lines:\n"
-        "straight: [noop|forward|backward]\n"
-        "pan: [noop|left|right]\n"
-        "jump: [noop|jump]\n"
-        "Do not add explanations or extra text."
+        "You are a strict cleaner/normalizer for Minecraft ACTION RECOGNITION outputs.\n"
+        "The model was asked to predict the action that moves from the last frame to the next frame in the history.\n"
+        "Your ONLY task is to return the normalized three-line action block and nothing else. Requirements:\n"
+        "- Line 1: straight: <noop|forward|backward>\n"
+        "- Line 2: pan: <noop|left|right>\n"
+        "- Line 3: jump: <noop|jump>\n"
+        "- No extra lines, no reasoning, no labels, no prefixes/suffixes, no code fences.\n"
+        "- Remove any unrelated text (frames, notes, examples) and output exactly these three lines."
     )
-    user_msg = f"Extract and normalize the action block from this noisy prediction:\n{raw_text}"
+    user_msg = (
+        f"{raw_text}\n\n"
+        "Task: Normalize the predicted action describing the transition between the last two frames. "
+        "Output exactly the three lines above and nothing else."
+    )
     resp = client.chat.completions.create(
         model=model,
         messages=[

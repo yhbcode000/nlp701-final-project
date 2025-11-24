@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import math
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
@@ -36,9 +38,24 @@ def run_inference(
     )
     print(f"Dataset loaded: {total_pairs} pairs, {len(unique_actions)} unique actions")
 
-    splits, _ = compute_dataset_splits(dataset, subset_fraction=subset_fraction)
-    test_indices = splits["test"]
-    print(f"Using test split of size {len(test_indices)} (subset_fraction={subset_fraction})")
+    def build_balanced_indices() -> List[int]:
+        if not (0 < subset_fraction < 1):
+            return list(range(len(dataset)))
+
+        label_to_indices: Dict[str, List[int]] = defaultdict(list)
+        for idx, pair in enumerate(dataset.data_pairs):
+            label_to_indices[pair["y"]].append(idx)
+
+        num_classes = len(label_to_indices)
+        per_class = max(1, math.ceil(subset_fraction * len(dataset) / num_classes))
+        balanced: List[int] = []
+        for label, indices in label_to_indices.items():
+            take = min(per_class, len(indices))
+            balanced.extend(indices[:take])
+        return balanced
+
+    test_indices = build_balanced_indices()
+    print(f"Using balanced test subset of size {len(test_indices)} (subset_fraction={subset_fraction})")
 
     results: Dict[str, dict] = {}
     raw_outputs: Dict[str, list] = {}
@@ -106,7 +123,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--size", type=int, default=5, help="Voxel cube side length for voxel2word.")
     parser.add_argument("--subset-fraction", type=float, default=0.05, help="Fraction of data to evaluate.")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference.")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for inference.")
     parser.add_argument("--max-new-tokens", type=int, default=2048, help="Max tokens to generate per sample.")
     parser.add_argument(
         "--ckpt",

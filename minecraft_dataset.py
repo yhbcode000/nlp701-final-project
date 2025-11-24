@@ -235,7 +235,8 @@ class MinecraftDataset(Dataset):
         # Create context from examples (in-context learning)
         instruction_lines = [
             "Predict the next frame using ONLY the pipe-delimited grid format.",
-            "Return the same number of rows as the input frame and do not add labels or commentary.",
+            "Return the same number of rows as the input frame and do not add labels, reasoning, or commentary.",
+            "Do not think aloud—output the grid directly.",
         ]
 
         context_sections = ["\n".join(instruction_lines)]
@@ -289,7 +290,8 @@ class MinecraftDataset(Dataset):
             "Respond with ONLY the three-line action block in the exact format shown.",
             "Each line must be of the form `category: value` matching the provided options.",
             "History entries alternate `Frame` → `Frame Next` → `Action` for prior transitions.",
-            "Do not include explanations, labels, or extra text before or after the block.",
+            "Do not include explanations, reasoning, labels, or extra text before or after the block.",
+            "Do not think aloud—output the three lines directly.",
         ]
         if self.context_examples:
             for ex in self.context_examples[:3]:

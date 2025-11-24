@@ -34,3 +34,5 @@ datasets/minecraft/data/
 # OS cruft
 .DS_Store
 Thumbs.db
+evals/
+results/

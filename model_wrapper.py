@@ -253,7 +253,7 @@ class ModelWrapper:
 
         return total_loss / len(dataloader)
 
-    def evaluate(self, test_loader: DataLoader, max_new_tokens: int = 512):
+    def evaluate(self, test_loader: DataLoader, max_new_tokens: int = 2048):
         """Generate predictions for a test loader."""
         self.model.eval()
         predictions = []
@@ -292,7 +292,7 @@ class ModelWrapper:
         model_key: Optional[str] = None,
         context_examples: Optional[Sequence[Dict[str, Any]]] = None,
         batch_size: int = 1,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 2048,
         action_embedder: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Run evaluation against specific dataset indices and compute metrics."""

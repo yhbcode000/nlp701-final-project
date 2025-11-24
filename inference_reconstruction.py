@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--size", type=int, default=5, help="Voxel cube side length for voxel2word.")
     parser.add_argument("--subset-fraction", type=float, default=0.05, help="Fraction of data to evaluate.")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for inference.")
-    parser.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens to generate per sample.")
+    parser.add_argument("--max-new-tokens", type=int, default=2048, help="Max tokens to generate per sample.")
     parser.add_argument(
         "--ckpt",
         type=Path,

@@ -45,7 +45,7 @@ def extract_grid_with_openai(raw_text: str, client: OpenAI, model: str) -> str:
             {"role": "user", "content": user_msg},
         ],
         temperature=0,
-        max_tokens=512,
+        max_tokens=2048,
     )
     content = resp.choices[0].message.content or ""
     return strip_code_fences(content)

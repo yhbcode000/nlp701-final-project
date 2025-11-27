@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import re
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -75,6 +76,35 @@ def compute_ci(values: np.ndarray) -> Tuple[float, float]:
     return (mean - margin, mean + margin)
 
 
+MODEL_SIZE_ORDER = [0.6, 1.7, 4, 8, 14, 32]
+MODEL_COLORS = sns.color_palette(None, len(MODEL_SIZE_ORDER))
+MODEL_COLOR_MAP = {size: color for size, color in zip(MODEL_SIZE_ORDER, MODEL_COLORS)}
+
+
+def _parse_model_size(model: str) -> float:
+    """Extract numeric size (e.g., 0.6 from 'qwen3-0.6b'); inf if unknown."""
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)b", model)
+    return float(match.group(1)) if match else float("inf")
+
+
+def model_sort_key(model: str) -> tuple:
+    size = _parse_model_size(model)
+    try:
+        idx = MODEL_SIZE_ORDER.index(size)
+    except ValueError:
+        idx = len(MODEL_SIZE_ORDER)
+    return (idx, size, model)
+
+
+def model_color(model: str) -> str:
+    size = _parse_model_size(model)
+    return MODEL_COLOR_MAP.get(size, "#4C72B0")
+
+
+def model_palette(models: List[str]) -> Dict[str, str]:
+    return {m: model_color(m) for m in models}
+
+
 def plot_metrics_vs_size(
     data: Dict[str, Dict[int, Dict[str, float]]],
     per_record: Dict[str, Dict[int, List[Dict[str, float]]]],
@@ -83,7 +113,8 @@ def plot_metrics_vs_size(
     out_dir.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     for metric, ax in zip(["mean_bleu", "mean_similarity"], axes):
-        for model, size_map in data.items():
+        for model in sorted(data.keys(), key=model_sort_key):
+            size_map = data[model]
             sizes = sorted(size_map.keys())
             ys = [size_map[s][metric] for s in sizes]
             # compute 95% CI from per-record
@@ -108,7 +139,10 @@ def plot_metrics_vs_size(
                     np.array(ci_upper) - np.array(ys),
                 ],
                 marker="o",
+                markersize=4,
                 label=model,
+                color=model_color(model),
+                linewidth=1,
                 capsize=4,
             )
         ax.set_xlabel("Voxel size")
@@ -173,7 +207,7 @@ def plot_distributions(
 def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], out_dir: Path, metric: str) -> None:
     """Side-by-side box plots per size (3/5/7) with model legend."""
     target_sizes = [3, 5, 7]
-    models = sorted(per_record.keys())
+    models = sorted(per_record.keys(), key=model_sort_key)
     if not models:
         return
 
@@ -187,7 +221,6 @@ def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], 
                 grouped[size][model] = vals
 
     fig, ax = plt.subplots(figsize=(8, 4))
-    colors = ["#4C72B0", "#C44E52", "#55A868", "#8172B3"]
     legend_handles = []
     positions = []
     labels = []
@@ -207,7 +240,7 @@ def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], 
             positions.append(pos)
             labels.append(f"{size}")
             box_data.append(vals)
-            color = colors[mi % len(colors)]
+            color = model_color(model)
             bp = ax.boxplot(
                 vals,
                 positions=[pos],
@@ -218,7 +251,6 @@ def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], 
                 flierprops={"marker": "x", "markersize": 5},
             )
             bp["boxes"][0].set_facecolor(color)
-            bp["boxes"][0].set_alpha(0.5)
             for median in bp["medians"]:
                 median.set_color(color)
             legend_handles.append((color, model))
@@ -269,8 +301,18 @@ def plot_seaborn_kde(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], o
     import pandas as pd  # local import to avoid dependency at module import time
 
     df = pd.DataFrame(records)
-    g = sns.FacetGrid(df, col="size", hue="model", sharex=False, sharey=False, col_order=sorted(df["size"].unique()))
-    g.map_dataframe(sns.kdeplot, x=metric, fill=True, alpha=0.3)
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
+    g = sns.FacetGrid(
+        df,
+        col="size",
+        hue="model",
+        hue_order=model_order,
+        palette=model_palette(model_order),
+        sharex=False,
+        sharey=False,
+        col_order=sorted(df["size"].unique()),
+    )
+    g.map_dataframe(sns.kdeplot, x=metric, fill=True, alpha=1.0)
     g.add_legend(title="Model")
     g.set_axis_labels(metric.replace("_", " ").title(), "Density")
     g.fig.suptitle(f"{metric.replace('_', ' ').title()} KDE by size (seaborn)", y=1.02)
@@ -298,14 +340,17 @@ def plot_seaborn_scatter(per_record: Dict[str, Dict[int, List[Dict[str, float]]]
 
     df = pd.DataFrame(records)
     sns.set_style("whitegrid")
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
     g = sns.lmplot(
         data=df,
         x="bleu",
         y="similarity",
         hue="model",
+        hue_order=model_order,
+        palette=model_palette(model_order),
         markers="o",
-        scatter_kws={"alpha": 0.6, "s": 30},
-        line_kws={"linewidth": 2},
+        scatter_kws={"alpha": 1.0, "s": 15},
+        line_kws={"linewidth": 1},
         height=4,
         aspect=1.2,
     )
@@ -339,16 +384,19 @@ def plot_seaborn_scatter_by_size(per_record: Dict[str, Dict[int, List[Dict[str, 
         target_sizes = sorted(df["size"].unique())
 
     sns.set_style("whitegrid")
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
     g = sns.lmplot(
         data=df[df["size"].isin(target_sizes)],
         x="bleu",
         y="similarity",
         hue="model",
+        hue_order=model_order,
+        palette=model_palette(model_order),
         col="size",
         col_wrap=3,
         markers="o",
-        scatter_kws={"alpha": 0.6, "s": 30},
-        line_kws={"linewidth": 2},
+        scatter_kws={"alpha": 1.0, "s": 15},
+        line_kws={"linewidth": 1},
         height=4,
         aspect=0.9,
     )
@@ -374,15 +422,18 @@ def plot_metric_vs_size_scatter(metrics_map: Dict[str, Dict[int, Dict[str, float
 
     df = pd.DataFrame(rows)
     sns.set_style("whitegrid")
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
     for metric in ["similarity", "bleu"]:
         g = sns.lmplot(
             data=df,
             x="size",
             y=metric,
             hue="model",
+            hue_order=model_order,
+            palette=model_palette(model_order),
             markers="o",
-            scatter_kws={"s": 70, "alpha": 0.8},
-            line_kws={"linewidth": 2},
+            scatter_kws={"s": 35, "alpha": 1.0},
+            line_kws={"linewidth": 1},
             height=4,
             aspect=1.2,
         )

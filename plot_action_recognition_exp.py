@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import re
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-import seaborn as sns
 
 
 def load_action_csv(path: Path) -> Tuple[str, int, Dict[str, float], List[Dict[str, int]]]:
@@ -74,6 +74,31 @@ def is_correct_action(true_val: int, pred_val: int) -> bool:
     return pred_val != 0
 
 
+MODEL_SIZE_ORDER = [0.6, 1.7, 4, 8, 14, 32]
+MODEL_COLORS = sns.color_palette(None, len(MODEL_SIZE_ORDER))
+MODEL_COLOR_MAP = {size: color for size, color in zip(MODEL_SIZE_ORDER, MODEL_COLORS)}
+
+
+def _parse_model_size(model: str) -> float:
+    """Extract numeric size (e.g., 0.6 from 'qwen3-0.6b'); inf if unknown."""
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)b", model)
+    return float(match.group(1)) if match else float("inf")
+
+
+def model_sort_key(model: str) -> tuple:
+    size = _parse_model_size(model)
+    try:
+        idx = MODEL_SIZE_ORDER.index(size)
+    except ValueError:
+        idx = len(MODEL_SIZE_ORDER)
+    return (idx, size, model)
+
+
+def model_color(model: str) -> str:
+    size = _parse_model_size(model)
+    return MODEL_COLOR_MAP.get(size, "#4C72B0")
+
+
 def plot_combined_with_error(
     metrics_map: Dict[str, Dict[int, Dict[str, float]]],
     per_record: Dict[str, Dict[int, List[Dict[str, int]]]],
@@ -108,6 +133,8 @@ def plot_combined_with_error(
                 label=dim,
                 color=colors.get(dim),
                 marker="o",
+                markersize=4,
+                linewidth=1,
                 capsize=4,
             )
         ax.set_xlabel("Voxel size")
@@ -130,12 +157,11 @@ def plot_per_dim_with_error(
     """Three separate plots (straight/pan/jump), models as legend, with 95% CI error bars."""
     out_dir.mkdir(parents=True, exist_ok=True)
     dims = ["straight", "pan", "jump"]
-    colors = sns.color_palette("tab10")
-    models = sorted(metrics_map.keys())
+    models = sorted(metrics_map.keys(), key=model_sort_key)
 
     for dim in dims:
         fig, ax = plt.subplots(figsize=(6.5, 4))
-        for mi, model in enumerate(models):
+        for model in models:
             size_map = metrics_map[model]
             sizes = sorted(size_map.keys())
             means = []
@@ -156,8 +182,10 @@ def plot_per_dim_with_error(
                 means,
                 yerr=[np.array(means) - np.array(lower), np.array(upper) - np.array(means)],
                 label=model,
-                color=colors[mi % len(colors)],
+                color=model_color(model),
                 marker="o",
+                markersize=4,
+                linewidth=1,
                 capsize=4,
             )
         ax.set_xlabel("Voxel size")
@@ -173,9 +201,8 @@ def plot_per_dim_with_error(
 
 
 def _overall_accuracy_curve(per_record, exclude_all_zero: bool, min_correct: int = 3):
-    colors = sns.color_palette("tab10")
     curves = []
-    for mi, (model, size_map) in enumerate(sorted(per_record.items())):
+    for model, size_map in sorted(per_record.items(), key=lambda kv: model_sort_key(kv[0])):
         sizes = sorted(size_map.keys())
         means = []
         lower = []
@@ -198,7 +225,7 @@ def _overall_accuracy_curve(per_record, exclude_all_zero: bool, min_correct: int
             lower.append(lo)
             upper.append(hi)
             means.append(float(np.mean(accs)) if accs else float("nan"))
-        curves.append((model, sizes, means, lower, upper, colors[mi % len(colors)]))
+        curves.append((model, sizes, means, lower, upper, model_color(model)))
     return curves
 
 
@@ -214,6 +241,8 @@ def plot_overall_accuracy(per_record: Dict[str, Dict[int, List[Dict[str, int]]]]
             label=model,
             color=color,
             marker="o",
+            markersize=4,
+            linewidth=1,
             capsize=4,
         )
     ax.set_xlabel("Voxel size")
@@ -240,6 +269,8 @@ def plot_overall_accuracy_no_zero(per_record: Dict[str, Dict[int, List[Dict[str,
             label=model,
             color=color,
             marker="o",
+            markersize=4,
+            linewidth=1,
             capsize=4,
         )
     ax.set_xlabel("Voxel size")
@@ -266,6 +297,8 @@ def plot_at_least_one_accuracy(per_record: Dict[str, Dict[int, List[Dict[str, in
             label=model,
             color=color,
             marker="o",
+            markersize=4,
+            linewidth=1,
             capsize=4,
         )
     ax.set_xlabel("Voxel size")
@@ -292,6 +325,8 @@ def plot_at_least_two_accuracy(per_record: Dict[str, Dict[int, List[Dict[str, in
             label=model,
             color=color,
             marker="o",
+            markersize=4,
+            linewidth=1,
             capsize=4,
         )
     ax.set_xlabel("Voxel size")
@@ -318,6 +353,8 @@ def plot_at_least_three_accuracy(per_record: Dict[str, Dict[int, List[Dict[str, 
             label=model,
             color=color,
             marker="o",
+            markersize=4,
+            linewidth=1,
             capsize=4,
         )
     ax.set_xlabel("Voxel size")
@@ -348,7 +385,7 @@ def plot_confusion_matrices(per_record: Dict[str, Dict[int, List[Dict[str, int]]
     }
     label_map = {-1: "back/left/down", 0: "noop", 1: "forward/right/up"}
 
-    for model, size_map in sorted(per_record.items()):
+    for model, size_map in sorted(per_record.items(), key=lambda kv: model_sort_key(kv[0])):
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         for di, (dim, values) in enumerate(dim_configs.items()):
             n = len(values)
@@ -390,7 +427,7 @@ def plot_action_type_confusion(per_record: Dict[str, Dict[int, List[Dict[str, in
     out_dir.mkdir(parents=True, exist_ok=True)
     dim_order = ["straight", "pan", "jump"]
 
-    model_items = sorted(per_record.items())
+    model_items = sorted(per_record.items(), key=lambda kv: model_sort_key(kv[0]))
     if not model_items:
         return
 
@@ -445,7 +482,7 @@ def plot_joint_confusion(per_record: Dict[str, Dict[int, List[Dict[str, int]]]],
     labels = [f"s{s}_p{p}_j{j}" for s, p, j in combos]
     combo_index = {c: i for i, c in enumerate(combos)}
 
-    for model, size_map in sorted(per_record.items()):
+    for model, size_map in sorted(per_record.items(), key=lambda kv: model_sort_key(kv[0])):
         conf = np.zeros((len(combos), len(combos)), dtype=int)
         for recs in size_map.values():
             for r in recs:
@@ -485,7 +522,7 @@ def plot_correctness_stacked(per_record: Dict[str, Dict[int, List[Dict[str, int]
     categories = ["0 correct", "1 correct", "2 correct", "3 correct"]
     colors = ["#C44E52", "#DD8452", "#55A868", "#4C72B0"]
 
-    for model, size_map in sorted(per_record.items()):
+    for model, size_map in sorted(per_record.items(), key=lambda kv: model_sort_key(kv[0])):
         size_counts: Dict[int, List[int]] = {}
         for size, recs in size_map.items():
             bucket = size_counts.setdefault(size, [0, 0, 0, 0])  # idx=correct count
@@ -505,7 +542,7 @@ def plot_correctness_stacked(per_record: Dict[str, Dict[int, List[Dict[str, int]
         bar_containers = []
         for idx, label in enumerate(categories):
             values = [size_counts[s][idx] for s in sizes]
-            container = ax.bar(sizes, values, bottom=bottoms, label=label, color=colors[idx], alpha=0.85)
+            container = ax.bar(sizes, values, bottom=bottoms, label=label, color=colors[idx], alpha=1.0)
             bar_containers.append((container, values, bottoms.copy()))
             bottoms += np.array(values)
 

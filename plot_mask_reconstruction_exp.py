@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import re
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -37,6 +38,35 @@ def compute_ci(values: np.ndarray) -> Tuple[float, float]:
     std = float(np.std(values, ddof=1))
     margin = 1.96 * std / np.sqrt(values.size)
     return (mean - margin, mean + margin)
+
+
+MODEL_SIZE_ORDER = [0.6, 1.7, 4, 8, 14, 32]
+MODEL_COLORS = sns.color_palette(None, len(MODEL_SIZE_ORDER))
+MODEL_COLOR_MAP = {size: color for size, color in zip(MODEL_SIZE_ORDER, MODEL_COLORS)}
+
+
+def _parse_model_size(model: str) -> float:
+    """Extract numeric size (e.g., 0.6 from 'qwen3-0.6b'); inf if unknown."""
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)b", model)
+    return float(match.group(1)) if match else float("inf")
+
+
+def model_sort_key(model: str) -> tuple:
+    size = _parse_model_size(model)
+    try:
+        idx = MODEL_SIZE_ORDER.index(size)
+    except ValueError:
+        idx = len(MODEL_SIZE_ORDER)
+    return (idx, size, model)
+
+
+def model_color(model: str) -> str:
+    size = _parse_model_size(model)
+    return MODEL_COLOR_MAP.get(size, "#4C72B0")
+
+
+def model_palette(models: List[str]) -> Dict[str, str]:
+    return {m: model_color(m) for m in models}
 
 
 def load_mask_csv(path: Path) -> List[Dict[str, str]]:
@@ -101,7 +131,8 @@ def plot_metrics_vs_mask(metrics_map: Dict[str, Dict[int, Dict[str, float]]], pe
     out_dir.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     for metric, ax in zip(["mean_bleu", "mean_similarity"], axes):
-        for model, mask_map in metrics_map.items():
+        for model in sorted(metrics_map.keys(), key=model_sort_key):
+            mask_map = metrics_map[model]
             masks = sorted(mask_map.keys())
             means = []
             lowers = []
@@ -121,7 +152,10 @@ def plot_metrics_vs_mask(metrics_map: Dict[str, Dict[int, Dict[str, float]]], pe
                 means,
                 yerr=[np.array(means) - np.array(lowers), np.array(uppers) - np.array(means)],
                 marker="o",
+                markersize=4,
                 label=model,
+                color=model_color(model),
+                linewidth=1,
                 capsize=4,
             )
         ax.set_xlabel("Mask size")
@@ -194,8 +228,18 @@ def plot_seaborn_kde(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], o
     import pandas as pd  # local import
 
     df = pd.DataFrame(records)
-    g = sns.FacetGrid(df, col="mask", hue="model", sharex=False, sharey=False, col_order=sorted(df["mask"].unique()))
-    g.map_dataframe(sns.kdeplot, x=metric, fill=True, alpha=0.3)
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
+    g = sns.FacetGrid(
+        df,
+        col="mask",
+        hue="model",
+        hue_order=model_order,
+        palette=model_palette(model_order),
+        sharex=False,
+        sharey=False,
+        col_order=sorted(df["mask"].unique()),
+    )
+    g.map_dataframe(sns.kdeplot, x=metric, fill=True, alpha=1.0)
     g.add_legend(title="Model")
     g.set_axis_labels(metric.replace("_", " ").title(), "Density")
     g.fig.suptitle(f"{metric.replace('_', ' ').title()} KDE by mask (seaborn)", y=1.02)
@@ -221,14 +265,17 @@ def plot_seaborn_scatter(per_record: Dict[str, Dict[int, List[Dict[str, float]]]
 
     df = pd.DataFrame(records)
     sns.set_style("whitegrid")
+    model_order = sorted(df["model"].unique(), key=model_sort_key)
     g = sns.lmplot(
         data=df,
         x="bleu",
         y="similarity",
         hue="model",
+        hue_order=model_order,
+        palette=model_palette(model_order),
         markers="o",
-        scatter_kws={"alpha": 0.6, "s": 30},
-        line_kws={"linewidth": 2},
+        scatter_kws={"alpha": 1.0, "s": 15},
+        line_kws={"linewidth": 1},
         height=4,
         aspect=1.2,
     )

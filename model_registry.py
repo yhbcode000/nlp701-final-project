@@ -8,8 +8,12 @@ import torch
 from model_wrapper import ModelWrapper
 
 MODEL_PATHS: Dict[str, str] = {
-    "qwen3-0.6b": "models/Qwen3-0.6B",
-    "qwen3-4b": "models/Qwen3-4B",
+    # "qwen3-0.6b": "models/Qwen3-0.6B",
+    "qwen3-1.7b": "models/Qwen3-1.7B",
+    # "qwen3-4b": "models/Qwen3-4B",
+    "qwen3-8b": "models/Qwen3-8B",
+    "qwen3-14b": "models/Qwen3-14B",
+    "qwen3-32b": "models/Qwen3-32B",
 }
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

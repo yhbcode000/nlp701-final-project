@@ -257,9 +257,9 @@ class MinecraftDataset(Dataset):
 
         for item in batch:
             # Format with context: examples + current query
-            history_text = item.get("history_reconstruction") or (
-                f"Frame:\n{item['x']}\nAction:\n{item['y']}"
-            )
+            history_text = item.get("history_reconstruction")
+            if not history_text:
+                raise ValueError("history_reconstruction is required for frame_reconstruction prompts.")
             input_text = context + f"History:\n{history_text}\nNext Frame:"
             target_text = item['z']
 
@@ -312,15 +312,9 @@ class MinecraftDataset(Dataset):
         for item in batch:
             # Format with context: examples + current query
             history_text = item.get("history_action")
-            if history_text:
-                input_text = context + f"History:\n{history_text}\nAction:"
-            else:
-                input_text = (
-                    context
-                    + f"Frame:\n{item['x']}\n\n"
-                    + f"Frame:\n{item['z']}\n\n"
-                    + "Action:"
-                )
+            if not history_text:
+                raise ValueError("history_action is required for action_recognition prompts.")
+            input_text = context + f"History:\n{history_text}\nAction:"
             target_text = item['y'].strip()
 
             inputs.append(input_text)

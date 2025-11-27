@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage: ./scripts/run_frame_reconstruction_exp.sh
 # Iterates sizes 3,5,7; subset-fraction is fixed at 0.1 as requested.
 
-SIZES=(3 5 7)
+SIZES=(9 11 13)
 
 for SIZE in "${SIZES[@]}"; do
   echo "Running frame reconstruction inference (size=${SIZE}, subset-fraction=0.1)..."

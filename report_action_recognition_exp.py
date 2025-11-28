@@ -231,6 +231,20 @@ def print_leaderboards(rows: List[Dict[str, float]]) -> None:
         print("\t".join([m, f"{best_avg['avg']:.2f} @ {best_avg['size']}"]))
 
 
+def print_joint_leader(rows: List[Dict[str, float]]) -> None:
+    if not rows:
+        return
+    print("\nJoint leader per voxel size (mean of straight/pan/jump):")
+    print("\t".join(["Size", "Top Avg"]))
+    sizes = sorted({r["size"] for r in rows})
+    for s in sizes:
+        subset = [r for r in rows if r["size"] == s]
+        if not subset:
+            continue
+        best = max(subset, key=lambda x: x["avg"])
+        print("\t".join([str(s), f"{best['model']} ({best['avg']:.2f})"]))
+
+
 def print_regressions(rows: List[Dict[str, float]]) -> None:
     if not rows:
         return

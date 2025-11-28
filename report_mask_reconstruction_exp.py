@@ -8,9 +8,44 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+console = Console()
 
 RESET = "\033[0m"
 GREEN = "\033[92m"
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+MODEL_SIZE_ORDER = [0.6, 1.7, 4, 8, 14, 32]
+
+
+def model_sort_key(model: str) -> tuple:
+    size = parse_model_size(model)
+    try:
+        idx = MODEL_SIZE_ORDER.index(size)
+    except ValueError:
+        idx = len(MODEL_SIZE_ORDER)
+    return (idx, size, model)
+
+
+def display_len(text: str) -> int:
+    return len(ANSI_RE.sub("", text))
+
+
+def pad_ansi(text: str, width: int) -> str:
+    extra = len(text) - display_len(text)
+    return f"{text:<{width + extra}}"
+
+
+def format_table(headers: List[str], rows: List[List[str]]) -> str:
+    widths = [max(display_len(h), *(display_len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    lines = []
+    lines.append("  ".join(pad_ansi(h, widths[i]) for i, h in enumerate(headers)))
+    for row in rows:
+        lines.append("  ".join(pad_ansi(val, widths[i]) for i, val in enumerate(row)))
+    return "\n".join(lines)
 
 
 def parse_model_size(model: str) -> float:
@@ -45,6 +80,22 @@ def fmt(val: float, best: float) -> str:
         return "--"
     text = f"{val:.2f}"
     return f"{GREEN}{text}{RESET}" if math.isclose(val, best, rel_tol=1e-9, abs_tol=1e-12) else text
+
+
+def styled_num(val: float, best: float) -> Text:
+    if val is None or math.isnan(val):
+        return Text("--")
+    style = "green" if math.isclose(val, best, rel_tol=1e-9, abs_tol=1e-12) else ""
+    return Text(f"{val:.2f}", style=style)
+
+
+def delta_text(val: float, baseline: float | None) -> Text:
+    if baseline is None or val is None or math.isnan(val) or math.isnan(baseline):
+        return Text("--")
+    diff = val - baseline
+    sign = "+" if diff > 0 else ("-" if diff < 0 else " ")
+    style = "green" if diff > 0 else ("red" if diff < 0 else "")
+    return Text(f"{sign}{abs(diff):.2f}", style=style)
 
 
 def collect_metrics() -> List[Dict[str, float]]:
@@ -89,31 +140,44 @@ def print_table(rows: List[Dict[str, float]]) -> None:
 
     best_bleu = max(r["bleu"] for r in rows)
     best_sim = max(r["sim"] for r in rows)
-    header = ["Model", "Mask size", "BLEU", "Similarity"]
-    print("\t".join(header))
-    for r in sorted(rows, key=lambda x: (x["model"], x["mask_size"])):
-        print(
-            "\t".join(
-                [
-                    r["model"],
-                    str(r["mask_size"]),
-                    fmt(r["bleu"], best_bleu),
-                    fmt(r["sim"], best_sim),
-                ]
-            )
+    baseline_mask = min(r["mask_size"] for r in rows if r["model"] == "qwen3-0.6b") if any(r["model"] == "qwen3-0.6b" for r in rows) else None
+    baseline_row = next((r for r in rows if r["model"] == "qwen3-0.6b" and r["mask_size"] == baseline_mask), None)
+    base_bleu = baseline_row["bleu"] if baseline_row else None
+    base_sim = baseline_row["sim"] if baseline_row else None
+
+    table = Table(title="Mask Reconstruction Metrics (baseline: qwen3-0.6b @ min mask)", show_header=True, header_style="bold")
+    table.add_column("Model", justify="left")
+    table.add_column("Mask size", justify="right")
+    table.add_column("BLEU", justify="right")
+    table.add_column("Δ BLEU", justify="right")
+    table.add_column("Similarity", justify="right")
+    table.add_column("Δ Sim", justify="right")
+    for r in sorted(rows, key=lambda x: (model_sort_key(x["model"]), x["mask_size"])):
+        table.add_row(
+            r["model"],
+            str(r["mask_size"]),
+            styled_num(r["bleu"], best_bleu),
+            delta_text(r["bleu"], base_bleu),
+            styled_num(r["sim"], best_sim),
+            delta_text(r["sim"], base_sim),
         )
+    console.print(table)
 
 
 def print_coverage(rows: List[Dict[str, float]]) -> None:
     if not rows:
         return
     expected_masks = [1, 2, 3, 4, 5, 6]
-    models = sorted({r["model"] for r in rows})
-    print("Coverage by model (present/expected mask sizes):")
+    models = sorted({r["model"] for r in rows}, key=model_sort_key)
+    table = Table(title="Coverage by model (present/expected mask sizes)", show_header=True, header_style="bold")
+    table.add_column("Model", justify="left")
+    table.add_column("Present/Expected", justify="right")
+    table.add_column("Missing", justify="left")
     for model in models:
         have = sorted({r["mask_size"] for r in rows if r["model"] == model})
         missing = [m for m in expected_masks if m not in have]
-        print(f"  {model}: {len(have)}/{len(expected_masks)} masks present; missing {missing if missing else 'none'}")
+        table.add_row(model, f"{len(have)}/{len(expected_masks)}", str(missing if missing else "none"))
+    console.print(table)
 
 
 def print_regressions(rows: List[Dict[str, float]]) -> None:
@@ -149,80 +213,107 @@ def print_aggregates(rows: List[Dict[str, float]]) -> None:
 
     best_bleu = max(np.mean([x["bleu"] for x in v]) for v in grouped.values())
     best_sim = max(np.mean([x["sim"] for x in v]) for v in grouped.values())
-    print("Per-model averages:")
-    print("\t".join(header))
-    for model in sorted(grouped.keys()):
+    base_bleu = np.mean([x["bleu"] for x in grouped.get("qwen3-0.6b", [])]) if grouped.get("qwen3-0.6b") else None
+    base_sim = np.mean([x["sim"] for x in grouped.get("qwen3-0.6b", [])]) if grouped.get("qwen3-0.6b") else None
+    table_rows = []
+    for model in sorted(grouped.keys(), key=model_sort_key):
         vals = grouped[model]
         avg_bleu = float(np.mean([x["bleu"] for x in vals]))
         avg_sim = float(np.mean([x["sim"] for x in vals]))
-        print(
-            "\t".join(
-                [
-                    model,
-                    fmt(avg_bleu, best_bleu),
-                    fmt(avg_sim, best_sim),
-                    str(len(vals)),
-                ]
-            )
+        table_rows.append(
+            [
+                model,
+                avg_bleu,
+                avg_sim,
+                str(len(vals)),
+            ]
         )
+    table = Table(title="Per-model averages (Δ vs qwen3-0.6b avg)", show_header=True, header_style="bold")
+    table.add_column("Model", justify="left")
+    table.add_column("Avg BLEU", justify="right")
+    table.add_column("Δ BLEU", justify="right")
+    table.add_column("Avg Similarity", justify="right")
+    table.add_column("Δ Sim", justify="right")
+    table.add_column("N masks", justify="right")
+    for row in table_rows:
+        table.add_row(
+            row[0],
+            styled_num(float(row[1]), best_bleu),
+            delta_text(float(row[1]), base_bleu),
+            styled_num(float(row[2]), best_sim),
+            delta_text(float(row[2]), base_sim),
+            row[3],
+        )
+    console.print(table)
 
 
 def print_volatility(rows: List[Dict[str, float]]) -> None:
     if not rows:
         return
-    print("Per-model volatility (std across masks):")
-    print("\t".join(["Model", "BLEU std", "Similarity std"]))
+    table = Table(title="Per-model volatility (std across masks, Δ vs qwen3-0.6b)", show_header=True, header_style="bold")
+    table.add_column("Model", justify="left")
+    table.add_column("BLEU std", justify="right")
+    table.add_column("Δ BLEU std", justify="right")
+    table.add_column("Similarity std", justify="right")
+    table.add_column("Δ Sim std", justify="right")
     grouped: Dict[str, List[Dict[str, float]]] = {}
     for r in rows:
         grouped.setdefault(r["model"], []).append(r)
-    for model in sorted(grouped.keys()):
+    base_vals = grouped.get("qwen3-0.6b", [])
+    base_bleu_std = float(np.std([x["bleu"] for x in base_vals])) if base_vals else None
+    base_sim_std = float(np.std([x["sim"] for x in base_vals])) if base_vals else None
+    for model in sorted(grouped.keys(), key=model_sort_key):
         vals = grouped[model]
         bleu_std = float(np.std([x["bleu"] for x in vals])) if vals else float("nan")
         sim_std = float(np.std([x["sim"] for x in vals])) if vals else float("nan")
-        print("\t".join([model, f"{bleu_std:.2f}", f"{sim_std:.2f}"]))
+        table.add_row(
+            model,
+            f"{bleu_std:.2f}",
+            delta_text(bleu_std, base_bleu_std),
+            f"{sim_std:.2f}",
+            delta_text(sim_std, base_sim_std),
+        )
+    console.print(table)
 
 
 def print_leaderboards(rows: List[Dict[str, float]]) -> None:
     if not rows:
         return
     masks = sorted({r["mask_size"] for r in rows})
-    print("Best model per mask size:")
-    print("\t".join(["Mask", "Top BLEU", "Top Similarity"]))
+    table = Table(title="Best model per mask size", show_header=True, header_style="bold")
+    table.add_column("Mask", justify="right")
+    table.add_column("Top BLEU", justify="left")
+    table.add_column("Top Similarity", justify="left")
     for m in masks:
         subset = [r for r in rows if r["mask_size"] == m]
         if not subset:
             continue
         best_bleu = max(subset, key=lambda x: x["bleu"])
         best_sim = max(subset, key=lambda x: x["sim"])
-        print(
-            "\t".join(
-                [
-                    str(m),
-                    f"{best_bleu['model']} ({best_bleu['bleu']:.2f})",
-                    f"{best_sim['model']} ({best_sim['sim']:.2f})",
-                ]
-            )
+        table.add_row(
+            str(m),
+            f"{best_bleu['model']} ({best_bleu['bleu']:.2f})",
+            f"{best_sim['model']} ({best_sim['sim']:.2f})",
         )
+    console.print(table)
 
-    print()
-    print("Best mask size per model:")
-    print("\t".join(["Model", "Top BLEU @mask", "Top Sim @mask"]))
-    models = sorted({r["model"] for r in rows})
+    table2 = Table(title="Best mask size per model", show_header=True, header_style="bold")
+    table2.add_column("Model", justify="left")
+    table2.add_column("Top BLEU @mask", justify="left")
+    table2.add_column("Top Sim @mask", justify="left")
+    models = sorted({r["model"] for r in rows}, key=model_sort_key)
     for model in models:
         subset = [r for r in rows if r["model"] == model]
         if not subset:
             continue
         best_bleu = max(subset, key=lambda x: x["bleu"])
         best_sim = max(subset, key=lambda x: x["sim"])
-        print(
-            "\t".join(
-                [
-                    model,
-                    f"{best_bleu['bleu']:.2f} @ {best_bleu['mask_size']}",
-                    f"{best_sim['sim']:.2f} @ {best_sim['mask_size']}",
-                ]
-            )
+        table2.add_row(
+            model,
+            f"{best_bleu['bleu']:.2f} @ {best_bleu['mask_size']}",
+            f"{best_sim['sim']:.2f} @ {best_sim['mask_size']}",
         )
+    console.print(table2)
 
 
 def main() -> None:

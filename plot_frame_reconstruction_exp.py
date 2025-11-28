@@ -205,8 +205,9 @@ def plot_distributions(
 
 
 def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], out_dir: Path, metric: str) -> None:
-    """Side-by-side box plots per size (3/5/7) with model legend."""
-    target_sizes = [3, 5, 7]
+    """Side-by-side box plots per size with model legend."""
+    all_sizes = sorted({size for size_map in per_record.values() for size in size_map.keys()})
+    target_sizes = all_sizes or [3, 5, 7]
     models = sorted(per_record.keys(), key=model_sort_key)
     if not models:
         return
@@ -278,7 +279,7 @@ def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], 
     ax.legend(title="Model")
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    out_path = out_dir / f"frame_reconstruction_{metric}_box_sizes_3_5_7.png"
+    out_path = out_dir / f"frame_reconstruction_{metric}_box.png"
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -348,9 +349,12 @@ def plot_seaborn_scatter(per_record: Dict[str, Dict[int, List[Dict[str, float]]]
         hue="model",
         hue_order=model_order,
         palette=model_palette(model_order),
-        markers="o",
-        scatter_kws={"alpha": 1.0, "s": 15},
+        fit_reg=True,
+        scatter=False,
+        markers="",
         line_kws={"linewidth": 1},
+        ci=None,
+        order=1,
         height=4,
         aspect=1.2,
     )
@@ -379,9 +383,7 @@ def plot_seaborn_scatter_by_size(per_record: Dict[str, Dict[int, List[Dict[str, 
     import pandas as pd  # local import
 
     df = pd.DataFrame(records)
-    target_sizes = sorted({3, 5, 7} & set(df["size"].unique()))
-    if not target_sizes:
-        target_sizes = sorted(df["size"].unique())
+    target_sizes = sorted(df["size"].unique())
 
     sns.set_style("whitegrid")
     model_order = sorted(df["model"].unique(), key=model_sort_key)
@@ -394,9 +396,12 @@ def plot_seaborn_scatter_by_size(per_record: Dict[str, Dict[int, List[Dict[str, 
         palette=model_palette(model_order),
         col="size",
         col_wrap=3,
-        markers="o",
-        scatter_kws={"alpha": 1.0, "s": 15},
+        fit_reg=True,
+        scatter=False,
+        markers="",
         line_kws={"linewidth": 1},
+        ci=None,
+        order=1,
         height=4,
         aspect=0.9,
     )
@@ -409,40 +414,64 @@ def plot_seaborn_scatter_by_size(per_record: Dict[str, Dict[int, List[Dict[str, 
     print(f"Saved {out_path}")
 
 
-def plot_metric_vs_size_scatter(metrics_map: Dict[str, Dict[int, Dict[str, float]]], out_dir: Path) -> None:
-    """Scatter+linear fit of size vs metric (BLEU, similarity) with model legend."""
-    import pandas as pd  # local import
-
-    rows = []
-    for model, size_map in metrics_map.items():
-        for size, vals in size_map.items():
-            rows.append({"model": model, "size": size, "bleu": vals["mean_bleu"], "similarity": vals["mean_similarity"]})
-    if not rows:
-        return
-
-    df = pd.DataFrame(rows)
-    sns.set_style("whitegrid")
-    model_order = sorted(df["model"].unique(), key=model_sort_key)
-    for metric in ["similarity", "bleu"]:
-        g = sns.lmplot(
-            data=df,
-            x="size",
-            y=metric,
-            hue="model",
-            hue_order=model_order,
-            palette=model_palette(model_order),
-            markers="o",
-            scatter_kws={"s": 35, "alpha": 1.0},
-            line_kws={"linewidth": 1},
-            height=4,
-            aspect=1.2,
-        )
-        g.fig.suptitle(f"{metric.title()} vs size (scatter + linear fit)", y=1.02)
-        g.set_axis_labels("Voxel size", metric.title())
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"frame_reconstruction_{metric}_vs_size_scatter.png"
-        g.fig.savefig(out_path, dpi=200, bbox_inches="tight")
-        plt.close(g.fig)
+def plot_metric_vs_size_scatter(
+    metrics_map: Dict[str, Dict[int, Dict[str, float]]],
+    per_record: Dict[str, Dict[int, List[Dict[str, float]]]],
+    out_dir: Path,
+) -> None:
+    """Plot size vs metric (BLEU, similarity) with error bars and per-model fit lines."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metric_info = [
+        ("mean_bleu", "BLEU", "frame_reconstruction_bleu_vs_size_scatter.png"),
+        ("mean_similarity", "Similarity", "frame_reconstruction_similarity_vs_size_scatter.png"),
+    ]
+    for metric_key, label, filename in metric_info:
+        fig, ax = plt.subplots(figsize=(6.5, 4))
+        for model in sorted(metrics_map.keys(), key=model_sort_key):
+            size_map = metrics_map[model]
+            sizes = sorted(size_map.keys())
+            ys = [size_map[s][metric_key] for s in sizes]
+            ci_lower = []
+            ci_upper = []
+            for s in sizes:
+                vals = np.array(
+                    [
+                        r["bleu"] if metric_key == "mean_bleu" else r["similarity"]
+                        for r in per_record.get(model, {}).get(s, [])
+                        if not np.isnan(r["bleu"] if metric_key == "mean_bleu" else r["similarity"])
+                    ]
+                )
+                low, high = compute_ci(vals)
+                ci_lower.append(low)
+                ci_upper.append(high)
+            ax.errorbar(
+                sizes,
+                ys,
+                yerr=[
+                    np.array(ys) - np.array(ci_lower),
+                    np.array(ci_upper) - np.array(ys),
+                ],
+                marker="o",
+                markersize=4,
+                label=model,
+                color=model_color(model),
+                linewidth=1,
+                capsize=4,
+            )
+            if len(sizes) >= 2:
+                coef = np.polyfit(sizes, ys, 1)
+                x_line = np.linspace(min(sizes), max(sizes), 100)
+                y_line = coef[0] * x_line + coef[1]
+                ax.plot(x_line, y_line, linestyle="--", linewidth=1, color=model_color(model), alpha=0.7)
+        ax.set_xlabel("Voxel size")
+        ax.set_ylabel(label)
+        ax.set_title(f"{label} vs size")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out_path = out_dir / filename
+        fig.savefig(out_path, dpi=200)
+        plt.close(fig)
         print(f"Saved {out_path}")
 
 
@@ -473,7 +502,7 @@ def main() -> None:
     plot_seaborn_kde(per_record, plot_dir, metric="similarity")
     plot_seaborn_scatter(per_record, plot_dir)
     plot_seaborn_scatter_by_size(per_record, plot_dir)
-    plot_metric_vs_size_scatter(metrics_map, plot_dir)
+    plot_metric_vs_size_scatter(metrics_map, per_record, plot_dir)
 
 
 if __name__ == "__main__":

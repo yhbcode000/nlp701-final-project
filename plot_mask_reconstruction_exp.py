@@ -127,7 +127,12 @@ def collect_metrics(eval_dir: Path, drop_air: bool) -> Tuple[Dict[str, Dict[int,
     return metrics_map, per_record
 
 
-def plot_metrics_vs_mask(metrics_map: Dict[str, Dict[int, Dict[str, float]]], per_record: Dict[str, Dict[int, List[Dict[str, float]]]], out_dir: Path) -> None:
+def plot_metrics_vs_mask(
+    metrics_map: Dict[str, Dict[int, Dict[str, float]]],
+    per_record: Dict[str, Dict[int, List[Dict[str, float]]]],
+    out_dir: Path,
+    name_suffix: str = "",
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     for metric, ax in zip(["mean_bleu", "mean_similarity"], axes):
@@ -164,7 +169,8 @@ def plot_metrics_vs_mask(metrics_map: Dict[str, Dict[int, Dict[str, float]]], pe
         ax.legend()
         ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    path = out_dir / "mask_reconstruction_metrics_vs_mask.png"
+    suffix = name_suffix
+    path = out_dir / f"mask_reconstruction_metrics_vs_mask{suffix}.png"
     fig.savefig(path, dpi=200)
     plt.close(fig)
     print(f"Saved {path}")
@@ -211,6 +217,89 @@ def plot_distributions(per_record: Dict[str, Dict[int, List[Dict[str, float]]]],
         fig.savefig(box_path, dpi=200)
         plt.close(fig)
         print(f"Saved {box_path}")
+
+
+def plot_combined_box(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], out_dir: Path, metric: str) -> None:
+    """Side-by-side box plots per mask size with model legend."""
+    all_masks = sorted({mask for mask_map in per_record.values() for mask in mask_map.keys()})
+    target_masks = all_masks or [1, 2, 3, 4, 5, 6]
+    models = sorted(per_record.keys(), key=model_sort_key)
+    if not models:
+        return
+
+    grouped: Dict[int, Dict[str, np.ndarray]] = {m: {} for m in target_masks}
+    for model in models:
+        for mask in target_masks:
+            rows = per_record.get(model, {}).get(mask, [])
+            vals = np.array([r[metric] for r in rows if not np.isnan(r[metric])])
+            if vals.size > 0:
+                grouped[mask][model] = vals
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    legend_handles = []
+    positions = []
+    labels = []
+    box_data = []
+    width = 0.35
+
+    for mi, mask in enumerate(target_masks):
+        model_vals = grouped.get(mask, {})
+        if not model_vals:
+            continue
+        base_pos = mi * (len(models) * width + 0.4)
+        for mj, model in enumerate(models):
+            vals = model_vals.get(model)
+            if vals is None or vals.size == 0:
+                continue
+            pos = base_pos + mj * width
+            positions.append(pos)
+            labels.append(f"{mask}")
+            box_data.append(vals)
+            color = model_color(model)
+            bp = ax.boxplot(
+                vals,
+                positions=[pos],
+                widths=width * 0.8,
+                showmeans=True,
+                meanline=True,
+                patch_artist=True,
+                flierprops={"marker": "x", "markersize": 5},
+            )
+            bp["boxes"][0].set_facecolor(color)
+            for median in bp["medians"]:
+                median.set_color(color)
+            legend_handles.append((color, model))
+
+    if not box_data:
+        plt.close(fig)
+        return
+
+    # Legend dedupe
+    seen = set()
+    for color, model in legend_handles:
+        if model in seen:
+            continue
+        seen.add(model)
+        ax.plot([], [], color=color, label=model)
+
+    ax.set_xticks(
+        [
+            np.mean([p for p, lbl in zip(positions, labels) if lbl == str(mask)])
+            for mask in target_masks
+            if any(lbl == str(mask) for lbl in labels)
+        ]
+    )
+    ax.set_xticklabels([str(mask) for mask in target_masks if any(lbl == str(mask) for lbl in labels)])
+    ax.set_xlabel("Mask size")
+    ax.set_ylabel(metric.replace("_", " ").title())
+    ax.set_title(f"{metric.replace('_', ' ').title()} Box Plot — models vs mask size")
+    ax.legend(title="Model")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    out_path = out_dir / f"mask_reconstruction_{metric}_box.png"
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    print(f"Saved {out_path}")
 
 
 def plot_seaborn_kde(per_record: Dict[str, Dict[int, List[Dict[str, float]]]], out_dir: Path, metric: str) -> None:
@@ -299,9 +388,15 @@ def main() -> None:
     plot_metrics_vs_mask(metrics_map, per_record, plot_dir)
     plot_distributions(per_record, plot_dir, metric="bleu")
     plot_distributions(per_record, plot_dir, metric="similarity")
+    plot_combined_box(per_record, plot_dir, metric="bleu")
+    plot_combined_box(per_record, plot_dir, metric="similarity")
     plot_seaborn_kde(per_record, plot_dir, metric="bleu")
     plot_seaborn_kde(per_record, plot_dir, metric="similarity")
     plot_seaborn_scatter(per_record, plot_dir)
+
+    # Additional metrics plot excluding air-only cases for comparison
+    metrics_no_air, per_record_no_air = collect_metrics(eval_dir, drop_air=True)
+    plot_metrics_vs_mask(metrics_no_air, per_record_no_air, plot_dir, name_suffix="_no_air")
 
 
 if __name__ == "__main__":
